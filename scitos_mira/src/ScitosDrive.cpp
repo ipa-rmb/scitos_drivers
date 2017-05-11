@@ -21,8 +21,7 @@
 uint64 MAGNETIC_BARRIER_RFID_CODE=0xabababab;
 
 ScitosDrive::ScitosDrive()
-: ScitosModule(std::string ("Drive")), move_base_action_server_(robot_->getRosNode(), "/move_base", boost::bind(&ScitosDrive::move_base_callback, this, _1), false) // this initializes the action server; important: always set the last parameter to false
-
+: ScitosModule(std::string ("Drive"))
 {
 }
 
@@ -37,7 +36,8 @@ void ScitosDrive::initialize()
   emergency_stop_pub_ = robot_->getRosNode().advertise<std_msgs::Bool>("/emergency_stop_status", 20, true);
 
   // mira navigation data types: http://www.mira-project.org/MIRA-doc/domains/robot/SCITOSConfigs/index.html
-  move_base_action_server_.start();
+  move_base_action_server_ = boost::shared_ptr<MoveBaseActionServer>(new MoveBaseActionServer(robot_->getRosNode(), "/move_base", boost::bind(&ScitosDrive::move_base_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
+  move_base_action_server_->start();
   
   robot_->getMiraAuthority().subscribe<mira::robot::Odometry2>("/robot/Odometry", //&ScitosBase::odometry_cb);
 							       &ScitosDrive::odometry_data_callback, this);
@@ -185,7 +185,7 @@ void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr&
 
 	// this sends the response back to the caller
 	MoveBaseActionServer::Result res;
-	move_base_action_server_.setSucceeded(res);
+	move_base_action_server_->setSucceeded(res);
 }
 
 

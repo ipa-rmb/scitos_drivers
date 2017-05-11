@@ -68,7 +68,7 @@ private:
 
 	ScitosDrive();
 
-	MoveBaseActionServer move_base_action_server_; ///< Action server which accepts requests for move base
+	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
 	void move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal);
 
 	ros::Subscriber cmd_vel_subscriber_;
