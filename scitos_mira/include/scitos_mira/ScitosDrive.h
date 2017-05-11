@@ -8,8 +8,11 @@
 #ifndef SCITOSBASE_H
 #define SCITOSBASE_H
 
-//#include <ros/ros.h>
+#include <ros/ros.h>
 //#include <fw/Framework.h>
+
+#include <actionlib/server/simple_action_server.h>
+#include <move_base_msgs/MoveBaseAction.h>
 
 #include <geometry_msgs/Twist.h>
 #include <robot/Odometry.h> //# MIRA odometry
@@ -25,6 +28,16 @@
 #include <scitos_msgs/EnableRfid.h>
 #include <scitos_msgs/BarrierStatus.h>
 #include <utils/Time.h>
+
+
+//TODO includes for move_base 
+#include <navigation/tasks/PositionTask.h>
+#include "navigation/tasks/PreferredDirectionTask.h"
+#include "navigation/Task.h"
+#include <navigation/tasks/OrientationTask.h>
+
+typedef actionlib::SimpleActionServer<move_base_msgs::MoveBaseAction> MoveBaseActionServer;
+
 
 class ScitosDrive: public ScitosModule {
 public:
@@ -52,7 +65,12 @@ public:
 	bool reset_barrier_stop(scitos_msgs::ResetBarrierStop::Request  &req, scitos_msgs::ResetBarrierStop::Response &res);
 	void publish_barrier_status();
 private:
+
 	ScitosDrive();
+
+	MoveBaseActionServer move_base_action_server_; ///< Action server which accepts requests for move base
+	void move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal);
+
 	ros::Subscriber cmd_vel_subscriber_;
 	ros::Publisher odometry_pub_;
 	ros::Publisher bumper_pub_;

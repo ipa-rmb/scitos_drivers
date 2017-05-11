@@ -1,3 +1,6 @@
+// Added code enabling usage of the ros method move_base  http://wiki.ros.org/move_base
+// _DO NOT USE_ without reviewing code segments marked with TODO
+
 
 #include "scitos_mira/ScitosDrive.h"
 #include "scitos_mira/ScitosG5.h"
@@ -7,6 +10,8 @@
 #include <nav_msgs/Odometry.h>
 
 #include <tf/transform_broadcaster.h>
+#include <eigen_conversions/eigen_msg.h>
+#include <Eigen/Geometry>
 
 #include <geometry_msgs/TransformStamped.h>
 #include <std_msgs/Bool.h>
@@ -15,10 +20,14 @@
 
 uint64 MAGNETIC_BARRIER_RFID_CODE=0xabababab;
 
-ScitosDrive::ScitosDrive() : ScitosModule(std::string ("Drive")) { 
+ScitosDrive::ScitosDrive()
+: ScitosModule(std::string ("Drive")), move_base_action_server_(robot_->getRosNode(), "/move_base", boost::bind(&ScitosDrive::move_base_callback, this, _1), false) // this initializes the action server; important: always set the last parameter to false
+
+{
 }
 
-void ScitosDrive::initialize() {
+void ScitosDrive::initialize()
+{
   odometry_pub_ = robot_->getRosNode().advertise<nav_msgs::Odometry>("/odom", 20);
   bumper_pub_ = robot_->getRosNode().advertise<std_msgs::Bool>("/bumper", 20);
   mileage_pub_ = robot_->getRosNode().advertise<std_msgs::Float32>("/mileage", 20);
@@ -26,6 +35,9 @@ void ScitosDrive::initialize() {
   rfid_pub_ = robot_->getRosNode().advertise<std_msgs::UInt64>("/rfid", 20);
   magnetic_barrier_pub_ = robot_->getRosNode().advertise<scitos_msgs::BarrierStatus>("/barrier_status", 20);
   emergency_stop_pub_ = robot_->getRosNode().advertise<std_msgs::Bool>("/emergency_stop_status", 20, true);
+
+  // mira navigation data types: http://www.mira-project.org/MIRA-doc/domains/robot/SCITOSConfigs/index.html
+  move_base_action_server_.start();
   
   robot_->getMiraAuthority().subscribe<mira::robot::Odometry2>("/robot/Odometry", //&ScitosBase::odometry_cb);
 							       &ScitosDrive::odometry_data_callback, this);
@@ -37,7 +49,6 @@ void ScitosDrive::initialize() {
 					      &ScitosDrive::motor_status_callback, this);
   robot_->getMiraAuthority().subscribe<uint64>("/robot/RFIDFloorTag",
 					      &ScitosDrive::rfid_status_callback, this);
-	
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback,
 						       this);
   
@@ -155,6 +166,28 @@ void ScitosDrive::odometry_data_callback(mira::ChannelRead<mira::robot::Odometry
 	// send the transform
 	robot_->getTFBroadcaster().sendTransform(odom_tf);
 }
+
+
+void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal)
+{
+	Eigen::Affine3d goal_pose;
+	tf::poseMsgToEigen(goal->target_pose.pose, goal_pose);
+	Eigen::Vector3d euler_angles = goal_pose.rotation().eulerAngles(2,1,0);	// computes yaw, pitch, roll angles from rotation matrix
+
+	mira::navigation::TaskPtr task(new mira::navigation::Task());
+	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f((goal->target_pose.pose.position.x, goal->target_pose.pose.position.y)), 0.1f, 0.1f)));
+	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(euler_angles(0), 0.1)));
+	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 1.0f)));
+
+	// Set this as our goal. Will cause the robot to start driving.
+	mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
+	r.wait();
+
+	// this sends the response back to the caller
+	MoveBaseActionServer::Result res;
+	move_base_action_server_.setSucceeded(res);
+}
+
 
 bool ScitosDrive::reset_motor_stop(scitos_msgs::ResetMotorStop::Request  &req, scitos_msgs::ResetMotorStop::Response &res) {
   //  call_mira_service
