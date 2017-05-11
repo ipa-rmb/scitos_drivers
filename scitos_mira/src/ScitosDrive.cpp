@@ -175,7 +175,7 @@ void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr&
 	Eigen::Vector3d euler_angles = goal_pose.rotation().eulerAngles(2,1,0);	// computes yaw, pitch, roll angles from rotation matrix
 
 	mira::navigation::TaskPtr task(new mira::navigation::Task());
-	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f((goal->target_pose.pose.position.x, goal->target_pose.pose.position.y)), 0.1f, 0.1f)));
+	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(goal->target_pose.pose.position.x, goal->target_pose.pose.position.y), 0.1f, 0.1f)));
 	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(euler_angles(0), 0.1)));
 	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 1.0f)));
 
