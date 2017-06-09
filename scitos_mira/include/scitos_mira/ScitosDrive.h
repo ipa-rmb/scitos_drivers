@@ -8,11 +8,10 @@
 #ifndef SCITOSBASE_H
 #define SCITOSBASE_H
 
-#include <ros/ros.h>
-//#include <fw/Framework.h>
+// todo: hack
+#define WITH_PILOT
 
-#include <actionlib/server/simple_action_server.h>
-#include <move_base_msgs/MoveBaseAction.h>
+#include <ros/ros.h>
 
 #include <geometry_msgs/Twist.h>
 #include <robot/Odometry.h> //# MIRA odometry
@@ -29,15 +28,25 @@
 #include <scitos_msgs/BarrierStatus.h>
 #include <utils/Time.h>
 
+#include <actionlib/server/simple_action_server.h>
+#include <move_base_msgs/MoveBaseAction.h>
+#include <scitos_msgs/MoveBasePathAction.h>
 
-//TODO includes for move_base 
+
+//includes for move_base
+#ifdef WITH_PILOT
 #include <navigation/tasks/PositionTask.h>
-#include "navigation/tasks/PreferredDirectionTask.h"
-#include "navigation/Task.h"
+#include <navigation/tasks/PreferredDirectionTask.h>
+#include <navigation/Task.h>
 #include <navigation/tasks/OrientationTask.h>
+#include <navigation/tasks/PathFollowTask.h>
+#endif
+
+#include <boost/thread/mutex.hpp>
+
 
 typedef actionlib::SimpleActionServer<move_base_msgs::MoveBaseAction> MoveBaseActionServer;
-
+typedef actionlib::SimpleActionServer<scitos_msgs::MoveBasePathAction> PathActionServer;
 
 class ScitosDrive: public ScitosModule {
 public:
@@ -55,6 +64,7 @@ public:
 	void mileage_data_callback(mira::ChannelRead<float> data);
 	void motor_status_callback(mira::ChannelRead<uint8> data);
 	void rfid_status_callback(mira::ChannelRead<uint64> data);
+	void nav_pilot_event_status_callback(mira::ChannelRead<std::string> data);
 
 	bool reset_motor_stop(scitos_msgs::ResetMotorStop::Request  &req, scitos_msgs::ResetMotorStop::Response &res);
 	bool reset_odometry(scitos_msgs::ResetOdometry::Request  &req, scitos_msgs::ResetOdometry::Response &res);
@@ -70,6 +80,11 @@ private:
 
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
 	void move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal);
+
+	boost::shared_ptr<PathActionServer> path_action_server_; ///< Action server which accepts requests a path to follow
+	void path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
+
+	double normalize_angle(double delta_angle);
 
 	ros::Subscriber cmd_vel_subscriber_;
 	ros::Publisher odometry_pub_;
@@ -89,6 +104,9 @@ private:
     ros::ServiceServer reset_barrier_stop_service_;
     std_msgs::Bool emergency_stop_;
     scitos_msgs::BarrierStatus barrier_status_;
+
+    std::string nav_pilot_event_status_;
+    boost::mutex nav_pilot_event_status_mutex_;
 };
 
 #endif

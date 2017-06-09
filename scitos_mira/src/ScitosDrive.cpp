@@ -39,6 +39,9 @@ void ScitosDrive::initialize()
   move_base_action_server_ = boost::shared_ptr<MoveBaseActionServer>(new MoveBaseActionServer(robot_->getRosNode(), "/move_base", boost::bind(&ScitosDrive::move_base_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
   move_base_action_server_->start();
   
+  path_action_server_ = boost::shared_ptr<PathActionServer>(new PathActionServer(robot_->getRosNode(), "/move_base_path", boost::bind(&ScitosDrive::path_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
+  path_action_server_->start();
+
   robot_->getMiraAuthority().subscribe<mira::robot::Odometry2>("/robot/Odometry", //&ScitosBase::odometry_cb);
 							       &ScitosDrive::odometry_data_callback, this);
   robot_->getMiraAuthority().subscribe<bool>("/robot/Bumper",
@@ -49,6 +52,9 @@ void ScitosDrive::initialize()
 					      &ScitosDrive::motor_status_callback, this);
   robot_->getMiraAuthority().subscribe<uint64>("/robot/RFIDFloorTag",
 					      &ScitosDrive::rfid_status_callback, this);
+#ifdef WITH_PILOT
+  robot_->getMiraAuthority().subscribe<std::string>("/navigation/PilotEvent", &ScitosDrive::nav_pilot_event_status_callback, this);
+#endif
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback,
 						       this);
   
@@ -167,9 +173,15 @@ void ScitosDrive::odometry_data_callback(mira::ChannelRead<mira::robot::Odometry
 	robot_->getTFBroadcaster().sendTransform(odom_tf);
 }
 
+void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string> data)
+{
+	boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
+	nav_pilot_event_status_ = data->value();
+}
 
 void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal)
 {
+#ifdef WITH_PILOT
 	Eigen::Affine3d goal_pose;
 	tf::poseMsgToEigen(goal->target_pose.pose, goal_pose);
 	Eigen::Vector3d euler_angles = goal_pose.rotation().eulerAngles(2,1,0);	// computes yaw, pitch, roll angles from rotation matrix
@@ -186,6 +198,136 @@ void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr&
 	// this sends the response back to the caller
 	MoveBaseActionServer::Result res;
 	move_base_action_server_->setSucceeded(res);
+#else
+	ROS_ERROR("ScitosDrive::move_base_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
+
+	// this sends the response back to the caller
+	MoveBaseActionServer::Result res;
+	move_base_action_server_->setAborted(res);
+#endif
+}
+
+double ScitosDrive::normalize_angle(double delta_angle)
+{
+	const double pi = 3.14159265359;
+	while (delta_angle < -pi)
+		delta_angle += 2*pi;
+	while (delta_angle > pi)
+		delta_angle -= 2*pi;
+	return delta_angle;
+}
+
+void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path)
+{
+#ifdef WITH_PILOT
+	/*
+	 * https://www.mira-project.org/MIRA-doc/toolboxes/Navigation/classmira_1_1navigation_1_1PathFollowTask.html#_details
+	 * http://www.mira-project.org/MIRA-doc/domains/tutorials/WaypointVisitor/index.html
+	 */
+	ROS_INFO("ScitosDrive::path_callback: Following a path.");
+
+	const float path_tolerance = (path->path_tolerance>0.f ? path->path_tolerance : 0.1f);
+	const float goal_position_tolerance = (path->goal_position_tolerance>0.f ? path->goal_position_tolerance : 0.1f);
+	const float goal_angle_tolerance = (path->goal_angle_tolerance>0.f ? path->goal_angle_tolerance : 0.17f);
+	const double pi = 3.14159265359;
+	// visit first pose with normal navigation
+	for (size_t i=0; i<1/*path->target_poses.size()*/; ++i)
+	{
+		// convert target pose to mira::Pose3
+		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
+				Eigen::Quaternionf(path->target_poses[i].pose.orientation.w, path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z));
+
+		std::cout << "  Start pose: " << target_pose.x() << ", " << target_pose.y() << ", " << target_pose.yaw() << std::endl;
+
+		// command new navigation goal
+		mira::navigation::TaskPtr task(new mira::navigation::Task());
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(target_pose.x(), target_pose.y()), goal_position_tolerance, goal_position_tolerance)));
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target_pose.yaw(), goal_angle_tolerance)));
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 5.0f)));
+
+		// Set this as our goal. Will cause the robot to start driving.
+		mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
+		r.wait();
+
+		// wait until close to target
+		while (true)
+		{
+			mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+			double distance_to_goal = (target_pose.x()-robot_pose.x())*(target_pose.x()-robot_pose.x()) + (target_pose.y()-robot_pose.y())*(target_pose.y()-robot_pose.y());
+			double delta_angle = normalize_angle(target_pose.yaw()-robot_pose.yaw());
+			//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
+			boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
+			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 || (distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance))
+				break;
+			ros::spinOnce();
+		}
+	}
+
+	// Alternative with PathFollowTask, but does not work reliably
+	mira::navigation::TaskPtr task(new mira::navigation::Task());
+	mira::navigation::PathFollowTask* path_follow_task_ptr = new mira::navigation::PathFollowTask(path_tolerance, goal_position_tolerance, mira::Anglef(mira::Radian<float>(goal_angle_tolerance)));
+	path_follow_task_ptr->frame = "/GlobalFrame";
+	mira::navigation::SubTaskPtr path_follow_task(path_follow_task_ptr);
+	for (size_t i=0; i<path->target_poses.size(); ++i)
+	{
+		// convert target pose to mira::Pose3
+		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
+				Eigen::Quaternionf(path->target_poses[i].pose.orientation.w, path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z));
+
+		// append target pose to path vector
+		mira::Pose2 pose(target_pose.x(), target_pose.y(), target_pose.yaw());
+		// interpolate too large steps in the path
+		if (i>0)
+		{
+			const mira::Pose2& prev_pose = path_follow_task_ptr->points.back();
+			if (fabs(pose.x()-prev_pose.x())>0.1 || fabs(pose.y()-prev_pose.y())>0.1 || fabs(normalize_angle(pose.phi()-prev_pose.phi()))>0.17)
+			{
+				int interpolations = std::max<int>(1, (int)fabs(pose.x()-prev_pose.x()) / 0.1);
+				interpolations = std::max<int>(interpolations, (int)fabs(pose.y()-prev_pose.y()) / 0.1);
+				const double delta_phi = normalize_angle(pose.phi()-prev_pose.phi());
+				interpolations = std::max<int>(interpolations, (int)fabs(delta_phi) / 0.17);
+				double step_width = 1.0/(interpolations+1.);
+				for (double k=step_width; k<0.999999; k+=step_width)
+					path_follow_task_ptr->points.push_back(mira::Pose2(prev_pose.x()+k*(pose.x()-prev_pose.x()), prev_pose.y()+k*(pose.y()-prev_pose.y()), prev_pose.phi()+k*delta_phi));
+			}
+		}
+		path_follow_task_ptr->points.push_back(pose);
+	}
+	for (size_t i=0; i<path_follow_task_ptr->points.size(); ++i)
+	{
+		std::cout << "  Pose " << i << ": " << path_follow_task_ptr->points[i].x() << ", " << path_follow_task_ptr->points[i].y() << ", " << path_follow_task_ptr->points[i].phi() << std::endl;
+	}
+	task->addSubTask(path_follow_task);
+	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.5f)));
+	// Set this as our goal. Will cause the robot to start driving.
+	mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
+	r.wait();
+	// wait until close to target
+	const mira::Pose2& target_pose = path_follow_task_ptr->points.back();
+	ros::Duration(1).sleep();
+	while (true)
+	{
+		mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+		double distance_to_goal = (target_pose.x()-robot_pose.x())*(target_pose.x()-robot_pose.x()) + (target_pose.y()-robot_pose.y())*(target_pose.y()-robot_pose.y());
+		double delta_angle = normalize_angle(target_pose.phi()-robot_pose.yaw());
+		//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
+		boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
+		if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 || (distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance))
+			break;
+		ros::spinOnce();
+	}
+
+
+	// this sends the response back to the caller
+	PathActionServer::Result res;
+	path_action_server_->setSucceeded(res);
+#else
+	ROS_ERROR("ScitosDrive::path_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
+
+	// this sends the response back to the caller
+	PathActionServer::Result res;
+	path_action_server_->setAborted(res);
+#endif
 }
 
 
