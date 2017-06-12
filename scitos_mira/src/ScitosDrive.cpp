@@ -1,6 +1,3 @@
-// Added code enabling usage of the ros method move_base  http://wiki.ros.org/move_base
-// _DO NOT USE_ without reviewing code segments marked with TODO
-
 
 #include "scitos_mira/ScitosDrive.h"
 #include "scitos_mira/ScitosG5.h"
@@ -20,13 +17,10 @@
 
 uint64 MAGNETIC_BARRIER_RFID_CODE=0xabababab;
 
-ScitosDrive::ScitosDrive()
-: ScitosModule(std::string ("Drive"))
-{
+ScitosDrive::ScitosDrive() : ScitosModule(std::string ("Drive")) {
 }
 
-void ScitosDrive::initialize()
-{
+void ScitosDrive::initialize() {
   odometry_pub_ = robot_->getRosNode().advertise<nav_msgs::Odometry>("/odom", 20);
   bumper_pub_ = robot_->getRosNode().advertise<std_msgs::Bool>("/bumper", 20);
   mileage_pub_ = robot_->getRosNode().advertise<std_msgs::Float32>("/mileage", 20);
@@ -34,13 +28,6 @@ void ScitosDrive::initialize()
   rfid_pub_ = robot_->getRosNode().advertise<std_msgs::UInt64>("/rfid", 20);
   magnetic_barrier_pub_ = robot_->getRosNode().advertise<scitos_msgs::BarrierStatus>("/barrier_status", 20);
   emergency_stop_pub_ = robot_->getRosNode().advertise<std_msgs::Bool>("/emergency_stop_status", 20, true);
-
-  // mira navigation data types: http://www.mira-project.org/MIRA-doc/domains/robot/SCITOSConfigs/index.html
-  move_base_action_server_ = boost::shared_ptr<MoveBaseActionServer>(new MoveBaseActionServer(robot_->getRosNode(), "/move_base", boost::bind(&ScitosDrive::move_base_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
-  move_base_action_server_->start();
-  
-  path_action_server_ = boost::shared_ptr<PathActionServer>(new PathActionServer(robot_->getRosNode(), "/move_base_path", boost::bind(&ScitosDrive::path_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
-  path_action_server_->start();
 
   robot_->getMiraAuthority().subscribe<mira::robot::Odometry2>("/robot/Odometry", //&ScitosBase::odometry_cb);
 							       &ScitosDrive::odometry_data_callback, this);
@@ -57,6 +44,13 @@ void ScitosDrive::initialize()
 #endif
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback,
 						       this);
+  // mira navigation data types: http://www.mira-project.org/MIRA-doc/domains/robot/SCITOSConfigs/index.html
+  move_base_action_server_ = boost::shared_ptr<MoveBaseActionServer>(new MoveBaseActionServer(robot_->getRosNode(), "/move_base", boost::bind(&ScitosDrive::move_base_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
+  move_base_action_server_->start();
+
+  path_action_server_ = boost::shared_ptr<PathActionServer>(new PathActionServer(robot_->getRosNode(), "/move_base_path", boost::bind(&ScitosDrive::path_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
+  path_action_server_->start();
+
   
   reset_motor_stop_service_ = robot_->getRosNode().advertiseService("/reset_motorstop", &ScitosDrive::reset_motor_stop, this);
   reset_odometry_service_ = robot_->getRosNode().advertiseService("/reset_odometry", &ScitosDrive::reset_odometry, this);
@@ -263,7 +257,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		}
 	}
 
-	// Alternative with PathFollowTask, but does not work reliably
+	// start path following behavior for the remaining trajectory
 	mira::navigation::TaskPtr task(new mira::navigation::Task());
 	mira::navigation::PathFollowTask* path_follow_task_ptr = new mira::navigation::PathFollowTask(path_tolerance, goal_position_tolerance, mira::Anglef(mira::Radian<float>(goal_angle_tolerance)));
 	path_follow_task_ptr->frame = "/GlobalFrame";

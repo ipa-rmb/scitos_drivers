@@ -48,7 +48,9 @@ include(Dependencies)
 
 # Require MIRAFramework package
 mira_require_package(MIRAFramework)
-mira_require_package(Navigation)
+mira_optional_package(Navigation)
+MIRA_FIND_PACKAGE(Navigation)
+message("-- PACKAGE_Navigation_FOUND = ${PACKAGE_Navigation_FOUND}")
 
 ##############################################################################
 
@@ -56,7 +58,11 @@ MACRO(catkin_add_mira target)
 # MIRA uses C++0x features
 set_target_properties(${target} PROPERTIES COMPILE_FLAGS -std=c++0x)
 # For transitive linking link against all auto liked libraries
-target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework Navigation)
+if(${PACKAGE_Navigation_FOUND})
+	target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework Navigation)
+else(${PACKAGE_Navigation_FOUND})
+		target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework)
+endif(${PACKAGE_Navigation_FOUND})
 ENDMACRO()
 
 
