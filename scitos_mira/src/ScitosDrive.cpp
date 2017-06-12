@@ -224,6 +224,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	const float goal_position_tolerance = (path->goal_position_tolerance>0.f ? path->goal_position_tolerance : 0.1f);
 	const float goal_angle_tolerance = (path->goal_angle_tolerance>0.f ? path->goal_angle_tolerance : 0.17f);
 	const double pi = 3.14159265359;
+
 	// visit first pose with normal navigation
 	for (size_t i=0; i<1/*path->target_poses.size()*/; ++i)
 	{
@@ -262,6 +263,9 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	mira::navigation::PathFollowTask* path_follow_task_ptr = new mira::navigation::PathFollowTask(path_tolerance, goal_position_tolerance, mira::Anglef(mira::Radian<float>(goal_angle_tolerance)));
 	path_follow_task_ptr->frame = "/GlobalFrame";
 	mira::navigation::SubTaskPtr path_follow_task(path_follow_task_ptr);
+	const float translation_sampling_step = 0.1f;	// [m]
+	const float rotation_sampling_step = 0.17f;		// [rad]
+	// set up path command
 	for (size_t i=0; i<path->target_poses.size(); ++i)
 	{
 		// convert target pose to mira::Pose3
@@ -269,33 +273,33 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 				Eigen::Quaternionf(path->target_poses[i].pose.orientation.w, path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z));
 
 		// append target pose to path vector
-		mira::Pose2 pose(target_pose.x(), target_pose.y(), target_pose.yaw());
+		const mira::Pose2 pose(target_pose.x(), target_pose.y(), target_pose.yaw());
 		// interpolate too large steps in the path
 		if (i>0)
 		{
 			const mira::Pose2& prev_pose = path_follow_task_ptr->points.back();
-			if (fabs(pose.x()-prev_pose.x())>0.1 || fabs(pose.y()-prev_pose.y())>0.1 || fabs(normalize_angle(pose.phi()-prev_pose.phi()))>0.17)
+			if (fabs(pose.x()-prev_pose.x())>translation_sampling_step || fabs(pose.y()-prev_pose.y())>translation_sampling_step || fabs(normalize_angle(pose.phi()-prev_pose.phi()))>rotation_sampling_step)
 			{
-				int interpolations = std::max<int>(1, (int)fabs(pose.x()-prev_pose.x()) / 0.1);
-				interpolations = std::max<int>(interpolations, (int)fabs(pose.y()-prev_pose.y()) / 0.1);
+				int interpolations = std::max<int>(1, (int)fabs(pose.x()-prev_pose.x()) / translation_sampling_step);
+				interpolations = std::max<int>(interpolations, (int)fabs(pose.y()-prev_pose.y()) / translation_sampling_step);
 				const double delta_phi = normalize_angle(pose.phi()-prev_pose.phi());
-				interpolations = std::max<int>(interpolations, (int)fabs(delta_phi) / 0.17);
-				double step_width = 1.0/(interpolations+1.);
-				for (double k=step_width; k<0.999999; k+=step_width)
+				interpolations = std::max<int>(interpolations, (int)fabs(delta_phi) / rotation_sampling_step);
+				const double step_width = 1.0/(interpolations+1.);
+				for (double k=step_width; k<0.9999999; k+=step_width)
 					path_follow_task_ptr->points.push_back(mira::Pose2(prev_pose.x()+k*(pose.x()-prev_pose.x()), prev_pose.y()+k*(pose.y()-prev_pose.y()), prev_pose.phi()+k*delta_phi));
 			}
 		}
 		path_follow_task_ptr->points.push_back(pose);
 	}
-	for (size_t i=0; i<path_follow_task_ptr->points.size(); ++i)
-	{
-		std::cout << "  Pose " << i << ": " << path_follow_task_ptr->points[i].x() << ", " << path_follow_task_ptr->points[i].y() << ", " << path_follow_task_ptr->points[i].phi() << std::endl;
-	}
+	std::cout << "  Following path with " << path_follow_task_ptr->points.size() << " interpolation points." << std::endl;
+//	for (size_t i=0; i<path_follow_task_ptr->points.size(); ++i)
+//		std::cout << "  Pose " << i << ": " << path_follow_task_ptr->points[i].x() << ", " << path_follow_task_ptr->points[i].y() << ", " << path_follow_task_ptr->points[i].phi() << std::endl;
 	task->addSubTask(path_follow_task);
 	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.5f)));
 	// Set this as our goal. Will cause the robot to start driving.
 	mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
 	r.wait();
+
 	// wait until close to target
 	const mira::Pose2& target_pose = path_follow_task_ptr->points.back();
 	ros::Duration(1).sleep();
@@ -310,7 +314,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 			break;
 		ros::spinOnce();
 	}
-
+	std::cout << "  Path following successfully terminated." << std::endl;
 
 	// this sends the response back to the caller
 	PathActionServer::Result res;
