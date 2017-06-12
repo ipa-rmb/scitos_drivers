@@ -52,7 +52,7 @@ void ScitosDrive::initialize()
 					      &ScitosDrive::motor_status_callback, this);
   robot_->getMiraAuthority().subscribe<uint64>("/robot/RFIDFloorTag",
 					      &ScitosDrive::rfid_status_callback, this);
-#ifdef WITH_PILOT
+#ifdef __WITH_PILOT__
   robot_->getMiraAuthority().subscribe<std::string>("/navigation/PilotEvent", &ScitosDrive::nav_pilot_event_status_callback, this);
 #endif
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback,
@@ -181,7 +181,7 @@ void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string>
 
 void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal)
 {
-#ifdef WITH_PILOT
+#ifdef __WITH_PILOT__
 	Eigen::Affine3d goal_pose;
 	tf::poseMsgToEigen(goal->target_pose.pose, goal_pose);
 	Eigen::Vector3d euler_angles = goal_pose.rotation().eulerAngles(2,1,0);	// computes yaw, pitch, roll angles from rotation matrix
@@ -219,7 +219,7 @@ double ScitosDrive::normalize_angle(double delta_angle)
 
 void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path)
 {
-#ifdef WITH_PILOT
+#ifdef __WITH_PILOT__
 	/*
 	 * https://www.mira-project.org/MIRA-doc/toolboxes/Navigation/classmira_1_1navigation_1_1PathFollowTask.html#_details
 	 * http://www.mira-project.org/MIRA-doc/domains/tutorials/WaypointVisitor/index.html

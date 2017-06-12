@@ -87,6 +87,8 @@ include_directories(include
 include(CMakeLists.mira)
 MIRA_REQUIRE_PACKAGE(SCITOS) # 0.23.1)
 
+MIRA_FIND_PACKAGE(Pilot)
+message("-- PACKAGE_Pilot_FOUND = ${PACKAGE_Pilot_FOUND}")
 
 ## Declare a cpp executable
 #add_executable(scitos_node src/scitos_node.cpp)
@@ -101,19 +103,11 @@ add_executable(scitos_node  src/scitos_node.cpp
 							src/ScitosHead.cpp)
 # make sure configure headers are build before node using them
 add_dependencies(scitos_node ${PROJECT_NAME}_gencfg scitos_msgs_gencpp) 
+if(${PACKAGE_Pilot_FOUND})
+	set_target_properties(scitos_node PROPERTIES COMPILE_DEFINITIONS "__WITH_PILOT__")
+endif(${PACKAGE_Pilot_FOUND})
 
 target_link_libraries(scitos_node ${catkin_LIBRARIES})
-
-
-## Add cmake target dependencies of the executable/library
-## as an example, message headers may need to be generated before nodes
-add_dependencies(scitos_node scitos_msgs_gencpp)
-
-## Specify libraries to link a library or executable target against
-# target_link_libraries(scitos_node
-#   ${catkin_LIBRARIES}
-# )
-
 
 
 #############

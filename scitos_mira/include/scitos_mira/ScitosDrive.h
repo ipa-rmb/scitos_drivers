@@ -8,9 +8,6 @@
 #ifndef SCITOSBASE_H
 #define SCITOSBASE_H
 
-// todo: hack
-#define WITH_PILOT
-
 #include <ros/ros.h>
 
 #include <geometry_msgs/Twist.h>
@@ -34,7 +31,7 @@
 
 
 //includes for move_base
-#ifdef WITH_PILOT
+#ifdef __WITH_PILOT__
 #include <navigation/tasks/PositionTask.h>
 #include <navigation/tasks/PreferredDirectionTask.h>
 #include <navigation/Task.h>
