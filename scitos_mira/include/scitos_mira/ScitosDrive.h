@@ -72,7 +72,6 @@ public:
 	bool reset_barrier_stop(scitos_msgs::ResetBarrierStop::Request  &req, scitos_msgs::ResetBarrierStop::Response &res);
 	void publish_barrier_status();
 private:
-
 	ScitosDrive();
 
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base

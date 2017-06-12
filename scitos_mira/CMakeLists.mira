@@ -61,7 +61,7 @@ set_target_properties(${target} PROPERTIES COMPILE_FLAGS -std=c++0x)
 if(${PACKAGE_Navigation_FOUND})
 	target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework Navigation)
 else(${PACKAGE_Navigation_FOUND})
-		target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework)
+	target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework)
 endif(${PACKAGE_Navigation_FOUND})
 ENDMACRO()
 
