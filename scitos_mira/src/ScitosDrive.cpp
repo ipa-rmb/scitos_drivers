@@ -15,6 +15,8 @@
 #include <std_msgs/Float32.h>
 #include <std_msgs/UInt64.h>
 
+#include <opencv2/opencv.hpp>
+
 uint64 MAGNETIC_BARRIER_RFID_CODE=0xabababab;
 
 ScitosDrive::ScitosDrive() : ScitosModule(std::string ("Drive")) {
@@ -40,7 +42,12 @@ void ScitosDrive::initialize() {
   robot_->getMiraAuthority().subscribe<uint64>("/robot/RFIDFloorTag",
 					      &ScitosDrive::rfid_status_callback, this);
 #ifdef __WITH_PILOT__
+  // Pilot
   robot_->getMiraAuthority().subscribe<std::string>("/navigation/PilotEvent", &ScitosDrive::nav_pilot_event_status_callback, this);
+
+  // maps
+  map_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("/map", 1, true);
+  robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
 #endif
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback,
 						       this);
@@ -79,21 +86,20 @@ void ScitosDrive::initialize() {
 void ScitosDrive::velocity_command_callback(const geometry_msgs::Twist::ConstPtr& msg) {
   if ( !barrier_status_.barrier_stopped && !emergency_stop_.data) {
       mira::RigidTransform<float, 2> speed(msg->linear.x, 0, msg->angular.z);
-      mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/robot/Robot",
-									     "setVelocity", speed);
+      mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/robot/Robot", "setVelocity", speed);
       r.wait();
   }
 }
 
 void ScitosDrive::bumper_data_callback(mira::ChannelRead<bool> data) {
 	std_msgs::Bool out;
-	out.data=data->value();					 
+	out.data=data->value();
 	bumper_pub_.publish(out);
 }
 
 void ScitosDrive::mileage_data_callback(mira::ChannelRead<float> data) {
   std_msgs::Float32 out;
-  out.data = data->value();					   
+  out.data = data->value();
   mileage_pub_.publish(out);
 }
 
@@ -165,7 +171,53 @@ void ScitosDrive::odometry_data_callback(mira::ChannelRead<mira::robot::Odometry
 	odom_tf.transform.rotation = orientation;
 	// send the transform
 	robot_->getTFBroadcaster().sendTransform(odom_tf);
+
+#ifdef __WITH_PILOT__
+	// publish localization if available
+	geometry_msgs::TransformStamped localization_tf;
+	localization_tf.header.stamp = odom_time;
+	localization_tf.header.frame_id = "/map";
+	localization_tf.child_frame_id = "/odom";
+	mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
+	tf::transformEigenToMsg(map_to_odometry, localization_tf.transform);
+	// send the transform
+	robot_->getTFBroadcaster().sendTransform(localization_tf);
+#endif
 }
+
+#ifdef __WITH_PILOT__
+void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
+{
+	// convert map to ROS format
+	nav_msgs::OccupancyGrid grid_msg;
+	grid_msg.header.stamp = ros::Time::now();
+	grid_msg.header.frame_id = "map";
+	grid_msg.info.resolution = data->value().getCellSize();
+	grid_msg.info.width = data->value().width();
+	grid_msg.info.height = data->value().height();
+	grid_msg.info.origin.position.x = -data->value().getWorldOffset()[0];
+	grid_msg.info.origin.position.y = -data->value().getWorldOffset()[1];
+
+	cv::Mat map = 255 - data->value().getMat();
+	grid_msg.data.resize(map.cols*map.rows);
+	int i=0;
+	for (int v=0; v<map.rows; ++v)
+	{
+		unsigned char* map_ptr = map.ptr(v);
+		for (int u=0; u<map.cols; ++u, ++i, ++map_ptr)
+		{
+			char value = (char)((double)*map_ptr*100./255);
+			value = (value < 5 ? 0 : value);
+			value = (value > 95 ? 100 : value);
+			grid_msg.data[i] = value;
+		}
+	}
+
+	map_pub_.publish(grid_msg);
+//	cv::imshow("map", map);
+//	cv::waitKey();
+}
+#endif
 
 void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string> data)
 {

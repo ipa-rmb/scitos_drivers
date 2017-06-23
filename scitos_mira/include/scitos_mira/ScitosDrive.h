@@ -28,6 +28,7 @@
 #include <actionlib/server/simple_action_server.h>
 #include <move_base_msgs/MoveBaseAction.h>
 #include <scitos_msgs/MoveBasePathAction.h>
+#include <nav_msgs/OccupancyGrid.h>
 
 
 //includes for move_base
@@ -37,6 +38,7 @@
 #include <navigation/Task.h>
 #include <navigation/tasks/OrientationTask.h>
 #include <navigation/tasks/PathFollowTask.h>
+#include <maps/OccupancyGrid.h>
 #endif
 
 #include <boost/thread/mutex.hpp>
@@ -74,6 +76,10 @@ public:
 private:
 	ScitosDrive();
 
+#ifdef __WITH_PILOT__
+	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
+#endif
+
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
 	void move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal);
 
@@ -83,6 +89,7 @@ private:
 	double normalize_angle(double delta_angle);
 
 	ros::Subscriber cmd_vel_subscriber_;
+	ros::Publisher map_pub_;
 	ros::Publisher odometry_pub_;
 	ros::Publisher bumper_pub_;
 	ros::Publisher mileage_pub_;
