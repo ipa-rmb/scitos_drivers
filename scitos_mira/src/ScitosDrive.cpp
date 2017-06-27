@@ -198,7 +198,7 @@ void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid>
 	grid_msg.info.origin.position.x = -data->value().getWorldOffset()[0];
 	grid_msg.info.origin.position.y = -data->value().getWorldOffset()[1];
 
-	cv::Mat map = 255 - data->value().getMat();
+	cv::Mat map = data->value().getMat();
 	grid_msg.data.resize(map.cols*map.rows);
 	int i=0;
 	for (int v=0; v<map.rows; ++v)
