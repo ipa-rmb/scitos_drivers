@@ -55,6 +55,9 @@ message("-- PACKAGE_Navigation_FOUND = ${PACKAGE_Navigation_FOUND}")
 MIRA_FIND_PACKAGE(Mapping)
 message("-- PACKAGE_Mapping_FOUND = ${PACKAGE_Mapping_FOUND}")
 
+mira_optional_package(SmoothTransitionPathObjective)
+MIRA_FIND_PACKAGE(SmoothTransitionPathObjective)
+
 ##############################################################################
 
 MACRO(catkin_add_mira target)
@@ -62,7 +65,7 @@ MACRO(catkin_add_mira target)
 set_target_properties(${target} PROPERTIES COMPILE_FLAGS -std=c++0x)
 # For transitive linking link against all auto liked libraries
 if(${PACKAGE_Navigation_FOUND} AND ${PACKAGE_Mapping_FOUND})
-	target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework Navigation Mapping)
+	target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework Navigation Mapping SmoothTransitionPathObjective)
 else(${PACKAGE_Navigation_FOUND} AND ${PACKAGE_Mapping_FOUND})
 	target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework)
 endif(${PACKAGE_Navigation_FOUND} AND ${PACKAGE_Mapping_FOUND})
