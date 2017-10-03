@@ -36,6 +36,7 @@
 #ifdef __WITH_PILOT__
 #include <navigation/tasks/PositionTask.h>
 #include <SmoothTransitionPositionTask.h>
+#include <pilot/WallDistanceTask.h>
 #include <navigation/tasks/PreferredDirectionTask.h>
 #include <navigation/Task.h>
 #include <navigation/tasks/OrientationTask.h>
@@ -86,8 +87,11 @@ private:
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
 	void move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal);
 
-	boost::shared_ptr<PathActionServer> path_action_server_; ///< Action server which accepts requests a path to follow
+	boost::shared_ptr<PathActionServer> path_action_server_; ///< Action server which accepts requests for a path to follow
 	void path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
+
+	boost::shared_ptr<PathActionServer> wall_follow_action_server_; ///< Action server which accepts requests for wall following
+	void wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
 
 	double normalize_angle(double delta_angle);
 
