@@ -110,7 +110,8 @@ void ScitosHead::publish_joint_state_actual() {
 	if (joint_state_actual_pub_)
 	  joint_state_actual_pub_.publish(js);
   } catch (mira::XRPC& e) {
-	ROS_WARN("Missing head angle publication as MIRA parameter error.");
+	// todo: uncomment
+	//ROS_WARN("Missing head angle publication as MIRA parameter error.");
   }
   
 }

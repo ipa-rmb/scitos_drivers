@@ -4,7 +4,6 @@
 
 #include <transform/RigidTransform.h>
 #include <geometry_msgs/Quaternion.h>
-#include <nav_msgs/Odometry.h>
 
 #include <tf/transform_broadcaster.h>
 #include <eigen_conversions/eigen_msg.h>
@@ -48,6 +47,7 @@ void ScitosDrive::initialize() {
   // maps
   map_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("/map", 1, true);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
+  robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
 #endif
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback,
 						       this);
@@ -157,6 +157,11 @@ void ScitosDrive::odometry_data_callback(mira::ChannelRead<mira::robot::Odometry
 	odom_msg.twist.twist.linear.x = data->value().velocity.x();
 	odom_msg.twist.twist.angular.z = data->value().velocity.phi();
 
+	{
+		boost::mutex::scoped_lock lock(odom_msg_mutex_);
+		odom_msg_ = odom_msg;
+	}
+
 	odometry_pub_.publish(odom_msg);
 
 	// Publish a TF
@@ -195,7 +200,7 @@ void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid>
 	grid_msg.info.resolution = data->value().getCellSize();
 	grid_msg.info.width = data->value().width();
 	grid_msg.info.height = data->value().height();
-	grid_msg.info.origin.position.x = -data->value().getWorldOffset()[0];
+	grid_msg.info.origin.position.x = -data->value().getWorldOffset()[0];	// todo: check whether - is correct
 	grid_msg.info.origin.position.y = -data->value().getWorldOffset()[1];
 
 	cv::Mat map = data->value().getMat();
@@ -216,6 +221,13 @@ void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid>
 	map_pub_.publish(grid_msg);
 //	cv::imshow("map", map);
 //	cv::waitKey();
+}
+
+void ScitosDrive::cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data)
+{
+	// store cost map
+	boost::mutex::scoped_lock lock(cost_map_mutex_);
+	cost_map_ = data->clone();
 }
 #endif
 
@@ -288,32 +300,74 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		// convert target pose to mira::Pose3
 		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
 				Eigen::Quaternionf(path->target_poses[i].pose.orientation.w, path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z));
-
 		std::cout << "  Next pose: " << target_pose.x() << ", " << target_pose.y() << ", " << target_pose.yaw() << std::endl;
+
+		// check whether the next target pose is accessible and skip occluded targets
+		{
+			boost::mutex::scoped_lock lock(cost_map_mutex_);
+			if (cost_map_.getMat().empty() != true)
+			{
+				const cv::Mat& cost_map = cost_map_.getMat();
+				cv::Point target_position_pixel((target_pose.x()+cost_map_.getWorldOffset()[0])/cost_map_.getCellSize(), (target_pose.y()+cost_map_.getWorldOffset()[1])/cost_map_.getCellSize());
+				//std::cout << "target_position_pixel: (" << target_position_pixel.x << ", " << target_position_pixel.y << "),   value: " << cost_map.at<double>(target_position_pixel) << std::endl;
+				//cv::Mat temp = cost_map.clone();
+				//cv::circle(temp, target_position_pixel, 2, cv::Scalar(0.5), -1);
+				//cv::imshow("cost_map", temp);
+				//cv::waitKey(10);
+				if (cost_map.at<double>(target_position_pixel) >=0.89)
+					continue;
+			}
+		}
+
+		// get current robot speed
+		double robot_speed_x = 0.; // [m/s]
+		double robot_speed_theta = 0.;	// [rad/s]
+		{
+			boost::mutex::scoped_lock lock(odom_msg_mutex_);
+			robot_speed_x = odom_msg_.twist.twist.linear.x;
+			robot_speed_theta = odom_msg_.twist.twist.angular.z;
+		}
+		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
+		const double max_speed = 0.5;
+		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
 
 		// command new navigation goal
 		mira::navigation::TaskPtr task(new mira::navigation::Task());
 //		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(target_pose.x(), target_pose.y()), 0.1, 0.1)));	// impose strong precision constraints, otherwise path cannot be followed properly
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
-				0.1, 0.1, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
+				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
 		// todo: (last point true optional)
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target_pose.yaw(), 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
 		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.98f)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
 
 		// Set this as our goal. Will cause the robot to start driving.
 		mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
 		r.wait();
 
 		// wait until close to target
+		const double robot_freeze_timeout = 4.;	// [s]
+		ros::Time last_robot_movement = ros::Time::now();
 		while (true)
 		{
 			mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
 			double distance_to_goal = (target_pose.x()-robot_pose.x())*(target_pose.x()-robot_pose.x()) + (target_pose.y()-robot_pose.y())*(target_pose.y()-robot_pose.y());
 			double delta_angle = normalize_angle(target_pose.yaw()-robot_pose.yaw());
 			//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
+			// also abort if the robot does not move for a long time
+			{
+				boost::mutex::scoped_lock lock(odom_msg_mutex_);
+				robot_speed_x = odom_msg_.twist.twist.linear.x;
+				robot_speed_theta = odom_msg_.twist.twist.angular.z;
+			}
+			if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
+				last_robot_movement = ros::Time::now();
+			double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
+			//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
 			boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
-			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 || (distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance))
+			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
+					(distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
+					(robot_freeze_time > robot_freeze_timeout))
 				break;
 			ros::spinOnce();
 		}

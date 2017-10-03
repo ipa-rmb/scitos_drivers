@@ -29,6 +29,7 @@
 #include <move_base_msgs/MoveBaseAction.h>
 #include <scitos_msgs/MoveBasePathAction.h>
 #include <nav_msgs/OccupancyGrid.h>
+#include <nav_msgs/Odometry.h>
 
 
 //includes for move_base
@@ -79,6 +80,7 @@ private:
 
 #ifdef __WITH_PILOT__
 	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
+	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 #endif
 
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
@@ -111,6 +113,12 @@ private:
 
     std::string nav_pilot_event_status_;
     boost::mutex nav_pilot_event_status_mutex_;
+
+    nav_msgs::Odometry odom_msg_;
+    boost::mutex odom_msg_mutex_;
+
+    mira::maps::GridMap<double,1> cost_map_;
+    boost::mutex cost_map_mutex_;
 };
 
 #endif
