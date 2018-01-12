@@ -336,8 +336,11 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		// command new navigation goal
 		mira::navigation::TaskPtr task(new mira::navigation::Task());
 //		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(target_pose.x(), target_pose.y()), 0.1, 0.1)));	// impose strong precision constraints, otherwise path cannot be followed properly
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
-				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
+//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
+//				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
+				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(false, false)));
 		// todo: (last point true optional)
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target_pose.yaw(), 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
 		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
@@ -698,6 +701,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstP
 			std::cout << "  Next pose: " << pose->val[0] << ", " << pose->val[1] << ", " << pose->val[2] << std::endl;
 
 			// todo: mark as visited and do not approach a pose in the vicinity again in future
+			// todo: use without wall task on longer distances
 
 			// get current robot speed
 			double robot_speed_x = 0.; // [m/s]
@@ -713,8 +717,11 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstP
 
 			// command new navigation goal
 			mira::navigation::TaskPtr task(new mira::navigation::Task());
-			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(pose->val[0], pose->val[1]),
-					/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
+			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(pose->val[0], pose->val[1]),
+					/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
+			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(false, false)));
+//			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(pose->val[0], pose->val[1]),
+//					/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
 			// todo: (last point true optional)
 			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(pose->val[2], 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
 			//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));

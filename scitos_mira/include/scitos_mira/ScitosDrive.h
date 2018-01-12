@@ -35,7 +35,7 @@
 //includes for move_base
 #ifdef __WITH_PILOT__
 #include <navigation/tasks/PositionTask.h>
-#include <SmoothTransitionPositionTask.h>
+#include <pilot/SmoothTransitionTask.h>
 #include <pilot/WallDistanceTask.h>
 #include <navigation/tasks/PreferredDirectionTask.h>
 #include <navigation/Task.h>
