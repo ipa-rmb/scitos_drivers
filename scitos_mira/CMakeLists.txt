@@ -8,7 +8,7 @@ find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp std_msgs sensor_msg
 
 
 ## System dependencies are found with CMake's conventions
-find_package(Boost REQUIRED COMPONENTS thread)
+# find_package(Boost REQUIRED COMPONENTS system thread)
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -85,7 +85,7 @@ include_directories(include
 
 # include cmake file for MIRA
 include(CMakeLists.mira)
-MIRA_REQUIRE_PACKAGE(SCITOS) # 0.23.1)
+MIRA_REQUIRE_PACKAGE(SCITOS)
 
 MIRA_FIND_PACKAGE(Pilot)
 message("-- PACKAGE_Pilot_FOUND = ${PACKAGE_Pilot_FOUND}")
@@ -108,6 +108,17 @@ if(${PACKAGE_Pilot_FOUND})
 endif(${PACKAGE_Pilot_FOUND})
 
 target_link_libraries(scitos_node ${catkin_LIBRARIES})
+
+
+## Add cmake target dependencies of the executable/library
+## as an example, message headers may need to be generated before nodes
+add_dependencies(scitos_node scitos_msgs_gencpp)
+
+## Specify libraries to link a library or executable target against
+# target_link_libraries(scitos_node
+#   ${catkin_LIBRARIES}
+# )
+
 
 
 #############
@@ -178,3 +189,11 @@ install(DIRECTORY resources/
 
 # for mira support (auto linking, enabling C++0x support,...)
 catkin_add_mira(scitos_node)
+
+
+
+if(CMAKE_HOST_UNIX)
+  catkin_add_env_hooks(90.mira-path SHELLS sh DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/env_hooks)
+else()
+  message(FATAL_ERROR "Only UNIX builds supported.")
+endif()
