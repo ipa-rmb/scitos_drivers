@@ -340,6 +340,13 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 //				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
 				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
+		// todo:
+		//      r.property("Smooth Transition", smoothTransition,
+		//        "If true, keep following the buffered plan until finished planning"
+		//        "to the new position, otherwise cancel motion and wait for the new plan", true);
+		//      r.property("Allow Transit", allowTransit,
+		//        "Whether it is required to stop at the position or allow passing through at "
+		//        "any velocity", true);
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(false, false)));
 		// todo: (last point true optional)
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target_pose.yaw(), 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
