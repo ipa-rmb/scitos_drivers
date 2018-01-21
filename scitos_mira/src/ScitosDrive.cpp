@@ -184,8 +184,9 @@ void ScitosDrive::odometry_data_callback(mira::ChannelRead<mira::robot::Odometry
 	geometry_msgs::TransformStamped localization_tf;
 	localization_tf.header.stamp = odom_time;
 	localization_tf.header.frame_id = "/map";
-	localization_tf.child_frame_id = "/odom";
-	mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
+	localization_tf.child_frame_id = "/base_link";	//"/odom";
+	//mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
+	mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/RobotFrame", "/maps/MapFrame");
 	tf::transformEigenToMsg(map_to_odometry, localization_tf.transform);
 	// send the transform
 	robot_->getTFBroadcaster().sendTransform(localization_tf);
