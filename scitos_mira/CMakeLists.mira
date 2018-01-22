@@ -45,6 +45,7 @@ ENDIF()
 
 set(CMAKE_MODULE_PATH ${MIRA_ROOT_DIR}/make)
 
+include(GlobalConfig)
 include(Prerequisites)
 include(Dependencies)
 
@@ -57,10 +58,10 @@ message("-- PACKAGE_Navigation_FOUND = ${PACKAGE_Navigation_FOUND}")
 MIRA_FIND_PACKAGE(Mapping)
 message("-- PACKAGE_Mapping_FOUND = ${PACKAGE_Mapping_FOUND}")
 
-mira_require_package(PilotSmoothTransition)
+mira_optional_package(PilotSmoothTransition)
 MIRA_FIND_PACKAGE(PilotSmoothTransition)
 
-mira_require_package(PilotWallDistance)
+mira_optional_package(PilotWallDistance)
 MIRA_FIND_PACKAGE(PilotWallDistance)
 
 ##############################################################################

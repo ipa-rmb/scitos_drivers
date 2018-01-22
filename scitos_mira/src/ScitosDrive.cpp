@@ -184,8 +184,9 @@ void ScitosDrive::odometry_data_callback(mira::ChannelRead<mira::robot::Odometry
 	geometry_msgs::TransformStamped localization_tf;
 	localization_tf.header.stamp = odom_time;
 	localization_tf.header.frame_id = "/map";
-	localization_tf.child_frame_id = "/odom";
-	mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
+	localization_tf.child_frame_id = "/base_link";	//"/odom";
+	//mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
+	mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/RobotFrame", "/maps/MapFrame");
 	tf::transformEigenToMsg(map_to_odometry, localization_tf.transform);
 	// send the transform
 	robot_->getTFBroadcaster().sendTransform(localization_tf);
@@ -336,16 +337,19 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		// command new navigation goal
 		mira::navigation::TaskPtr task(new mira::navigation::Task());
 //		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(target_pose.x(), target_pose.y()), 0.1, 0.1)));	// impose strong precision constraints, otherwise path cannot be followed properly
-		task->addSubTask(mira::navigation::SubTaskPtr(
-			new mira::navigation::PositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
-			                                  position_accuracy, position_accuracy,
-			                                  "/GlobalFrame")));
-		// impose strong precision constraints, otherwise path cannot be followed properly
-		task->addSubTask(mira::navigation::SubTaskPtr(
-			new mira::navigation::SmoothTransitionTask(/*smoothTransition=*/true,
-			                                           /*allowTransit=*/true)));
-		// todo: (last point allowTransit=false)
-
+//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
+//				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
+				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
+		// todo:
+		//      r.property("Smooth Transition", smoothTransition,
+		//        "If true, keep following the buffered plan until finished planning"
+		//        "to the new position, otherwise cancel motion and wait for the new plan", true);
+		//      r.property("Allow Transit", allowTransit,
+		//        "Whether it is required to stop at the position or allow passing through at "
+		//        "any velocity", true);
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(false, false)));
+		// todo: (last point true optional) // todo: (last point allowTransit=false)
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target_pose.yaw(), 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
 		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
@@ -705,6 +709,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstP
 			std::cout << "  Next pose: " << pose->val[0] << ", " << pose->val[1] << ", " << pose->val[2] << std::endl;
 
 			// todo: mark as visited and do not approach a pose in the vicinity again in future
+			// todo: use without wall task on longer distances
 
 			// get current robot speed
 			double robot_speed_x = 0.; // [m/s]
@@ -720,16 +725,16 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstP
 
 			// command new navigation goal
 			mira::navigation::TaskPtr task(new mira::navigation::Task());
-			task->addSubTask(mira::navigation::SubTaskPtr(
-				new mira::navigation::PositionTask(mira::Point2f(pose->val[0], pose->val[1]),
-				                                   position_accuracy, position_accuracy,
-				                                   "/GlobalFrame")));
-			// impose strong precision constraints, otherwise path cannot be followed properly
-			task->addSubTask(mira::navigation::SubTaskPtr(
-				new mira::navigation::SmoothTransitionTask(/*smoothTransition=*/true,
-				                                           /*allowTransit=*/true)));
+			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(pose->val[0], pose->val[1]),
+					/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
+			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(false, false)));
+//			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(pose->val[0], pose->val[1]),
+//					/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
+			// todo: (last point true optional)
+			//task->addSubTask(mira::navigation::SubTaskPtr(
+			//	new mira::navigation::SmoothTransitionTask(/*smoothTransition=*/true,
+			//	                                           /*allowTransit=*/true)));
 			// todo: (last point allowTransit=false)
-
 			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(pose->val[2], 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
 			//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
 			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
