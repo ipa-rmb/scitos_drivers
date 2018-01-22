@@ -12,6 +12,7 @@
 
 #include <geometry_msgs/Twist.h>
 #include <robot/Odometry.h> //# MIRA odometry
+#include <maps/OccupancyGrid.h> //# MIRA occupancy grid map
 #include "scitos_mira/ScitosModule.h"
 #include <std_msgs/Bool.h>
 #include <scitos_msgs/ResetMotorStop.h>
@@ -35,7 +36,7 @@
 //includes for move_base
 #ifdef __WITH_PILOT__
 #include <navigation/tasks/PositionTask.h>
-#include <SmoothTransitionPositionTask.h>
+#include <pilot/SmoothTransitionTask.h>
 #include <pilot/WallDistanceTask.h>
 #include <navigation/tasks/PreferredDirectionTask.h>
 #include <navigation/Task.h>
