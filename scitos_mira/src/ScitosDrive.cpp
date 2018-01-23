@@ -4,6 +4,7 @@
 
 #include <transform/RigidTransform.h>
 #include <geometry_msgs/Quaternion.h>
+#include <geometry_msgs/TransformStamped.h>
 
 #include <tf/transform_broadcaster.h>
 #include <eigen_conversions/eigen_msg.h>
@@ -16,7 +17,7 @@
 
 #include <opencv2/opencv.hpp>
 
-#define DISABLE_MOVEMENTS
+#define DISABLE_MOVEMENTS	// todo: remove
 
 uint64 MAGNETIC_BARRIER_RFID_CODE=0xabababab;
 
@@ -47,10 +48,13 @@ void ScitosDrive::initialize() {
   robot_->getMiraAuthority().subscribe<std::string>("/navigation/PilotEvent", &ScitosDrive::nav_pilot_event_status_callback, this);
 
   // maps
-  map_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("/map", 1, true);
+  map_frame_ = "map";
+  robot_frame_ = "base_link";
+  map_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>(map_frame_, 1, true);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
+  target_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/coverage_monitor_server/target_trajectory_monitor", 1);
 #endif
 #ifndef DISABLE_MOVEMENTS
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback, this);
@@ -189,8 +193,8 @@ void ScitosDrive::odometry_data_callback(mira::ChannelRead<mira::robot::Odometry
 	// publish localization if available
 	geometry_msgs::TransformStamped localization_tf;
 	localization_tf.header.stamp = odom_time;
-	localization_tf.header.frame_id = "/map";
-	localization_tf.child_frame_id = "/base_link";	//"/odom";
+	localization_tf.header.frame_id = map_frame_;
+	localization_tf.child_frame_id = robot_frame_;	//"/odom";
 	//mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
 	mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/RobotFrame", "/maps/MapFrame");
 	tf::transformEigenToMsg(map_to_odometry, localization_tf.transform);
@@ -346,6 +350,12 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 					continue;
 			}
 		}
+		// publish commanded next target
+		tf::StampedTransform transform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_);
+		geometry_msgs::TransformStamped transform_msg;
+		tf::transformStampedTFToMsg(transform, transform_msg);
+		target_trajectory_pub_.publish(transform_msg);
+
 
 		// get current robot speed
 		double robot_speed_x = 0.; // [m/s]

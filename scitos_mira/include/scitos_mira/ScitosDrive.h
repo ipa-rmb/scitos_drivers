@@ -83,6 +83,9 @@ private:
 #ifdef __WITH_PILOT__
 	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
+	ros::Publisher target_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
+	std::string map_frame_;			// name of the map coordinate system
+	std::string robot_frame_;		// name of the robot base frame
 #endif
 
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
