@@ -12,6 +12,7 @@
 
 #include <geometry_msgs/Twist.h>
 #include <robot/Odometry.h> //# MIRA odometry
+#include <robot/RobotModel.h> //# MIRA robot model Package(RobotDataTypes)
 #include <maps/OccupancyGrid.h> //# MIRA occupancy grid map
 #include "scitos_mira/ScitosModule.h"
 #include <std_msgs/Bool.h>
@@ -43,6 +44,8 @@
 #include <navigation/tasks/OrientationTask.h>
 #include <navigation/tasks/PathFollowTask.h>
 #include <maps/OccupancyGrid.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <tf/tf.h>
 #endif
 
 #include <boost/thread/mutex.hpp>
@@ -83,6 +86,9 @@ private:
 #ifdef __WITH_PILOT__
 	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
+	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
+	void waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance);
+	void publishCommandedTarget(const tf::StampedTransform& transform);
 	ros::Publisher target_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
 	std::string map_frame_;			// name of the map coordinate system
 	std::string robot_frame_;		// name of the robot base frame

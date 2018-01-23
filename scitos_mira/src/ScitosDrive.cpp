@@ -4,7 +4,6 @@
 
 #include <transform/RigidTransform.h>
 #include <geometry_msgs/Quaternion.h>
-#include <geometry_msgs/TransformStamped.h>
 
 #include <tf/transform_broadcaster.h>
 #include <eigen_conversions/eigen_msg.h>
@@ -288,9 +287,65 @@ double ScitosDrive::normalize_angle(double delta_angle)
 	return delta_angle;
 }
 
+#ifdef __WITH_PILOT__
+void ScitosDrive::getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta)
+{
+	boost::mutex::scoped_lock lock(odom_msg_mutex_);
+	robot_speed_x = odom_msg_.twist.twist.linear.x;
+	robot_speed_theta = odom_msg_.twist.twist.angular.z;
+}
+
+
+void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance)
+{
+	double robot_freeze_timeout = -1.;	// [s]
+	ros::Time last_robot_movement = ros::Time::now();
+	while (true)
+	{
+		mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+		const double distance_to_goal = sqrt((target_pose.x()-robot_pose.x())*(target_pose.x()-robot_pose.x()) + (target_pose.y()-robot_pose.y())*(target_pose.y()-robot_pose.y()));
+		const double delta_angle = normalize_angle(target_pose.yaw()-robot_pose.yaw());
+		//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
+
+		// flexible timeout on movements based on distance to goal, separate timeout function
+		if (robot_freeze_timeout < 0.)
+			robot_freeze_timeout = 2. + 0.2*distance_to_goal;
+
+		// also abort if the robot does not move for a long time
+		double robot_speed_x = 0.; // [m/s]
+		double robot_speed_theta = 0.;	// [rad/s]
+		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
+		if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
+			last_robot_movement = ros::Time::now();
+		double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
+		//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
+		boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
+		if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
+				(distance_to_goal<goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
+				(robot_freeze_time > robot_freeze_timeout))
+			break;
+		ros::spinOnce();
+	}
+}
+
+void ScitosDrive::publishCommandedTarget(const tf::StampedTransform& transform)
+{
+	// publish commanded next target
+	geometry_msgs::TransformStamped transform_msg;
+	tf::transformStampedTFToMsg(transform, transform_msg);
+	target_trajectory_pub_.publish(transform_msg);
+}
+#endif
+
 // Option with normal move commands
 void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path)
 {
+	// todo: read in robot radius
+	mira::RPCFuture<mira::robot::RobotModelPtr> r = robot_->getMiraAuthority().callService<mira::robot::RobotModelPtr>("/robot/Robot", "getRobotModel");
+	bool success = r.timedWait(mira::Duration::seconds(10));
+	double robot_radius = r.get()->getFootprint().getInnerRadius();
+
+
 #ifdef __WITH_PILOT__
 	/*
 	 * https://www.mira-project.org/MIRA-doc/toolboxes/Navigation/classmira_1_1navigation_1_1PathFollowTask.html#_details
@@ -303,31 +358,8 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	const float goal_angle_tolerance = (path->goal_angle_tolerance>0.f ? path->goal_angle_tolerance : 0.17f);
 	const double pi = 3.14159265359;
 
-//	// visit first pose with normal navigation
-//	// todo: task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
-//	// 0.1, 0.1, "/GlobalFrame", true, true)));
-//	// command new navigation goal
-//	if (path->target_poses.size()>0)
-//	{
-//		int i=0;
-//		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
-//				Eigen::Quaternionf(path->target_poses[i].pose.orientation.w, path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z));
-//		std::cout << "  Next pose: " << target_pose.x() << ", " << target_pose.y() << ", " << target_pose.yaw() << std::endl;
-//		mira::navigation::TaskPtr task(new mira::navigation::Task());
-//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
-//				/*0.1, 0.1,*/ goal_position_tolerance, goal_position_tolerance, "/GlobalFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
-//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target_pose.yaw(), 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
-//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
-//		// Set this as our goal. Will cause the robot to start driving.
-//		mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
-//		r.wait();
-//		// todo: add timeout, separate timeout function
-//	}
-
-	// todo: add flexible timeout on movements based on distance to goal, separate timeout function
-
 	// follow path
-	for (size_t i=1; i<path->target_poses.size(); ++i)
+	for (size_t i=0; i<path->target_poses.size(); ++i)
 	{
 		// convert target pose to mira::Pose3
 		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
@@ -346,25 +378,18 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 				//cv::circle(temp, target_position_pixel, 2, cv::Scalar(0.5), -1);
 				//cv::imshow("cost_map", temp);
 				//cv::waitKey(10);
-				if (cost_map.at<double>(target_position_pixel) >=0.89)
+				if (cost_map.at<double>(target_position_pixel) >= 0.89)
 					continue;
 			}
 		}
 		// publish commanded next target
-		tf::StampedTransform transform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_);
-		geometry_msgs::TransformStamped transform_msg;
-		tf::transformStampedTFToMsg(transform, transform_msg);
-		target_trajectory_pub_.publish(transform_msg);
-
+		publishCommandedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_));
 
 		// get current robot speed
 		double robot_speed_x = 0.; // [m/s]
 		double robot_speed_theta = 0.;	// [rad/s]
-		{
-			boost::mutex::scoped_lock lock(odom_msg_mutex_);
-			robot_speed_x = odom_msg_.twist.twist.linear.x;
-			robot_speed_theta = odom_msg_.twist.twist.angular.z;
-		}
+		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
+
 		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
 		const double max_speed = 0.5;
 		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
@@ -394,31 +419,34 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		r.wait();
 
 		// wait until close to target
-		const double robot_freeze_timeout = 4.;	// [s]
-		ros::Time last_robot_movement = ros::Time::now();
-		while (true)
-		{
-			mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
-			double distance_to_goal = (target_pose.x()-robot_pose.x())*(target_pose.x()-robot_pose.x()) + (target_pose.y()-robot_pose.y())*(target_pose.y()-robot_pose.y());
-			double delta_angle = normalize_angle(target_pose.yaw()-robot_pose.yaw());
-			//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
-			// also abort if the robot does not move for a long time
-			{
-				boost::mutex::scoped_lock lock(odom_msg_mutex_);
-				robot_speed_x = odom_msg_.twist.twist.linear.x;
-				robot_speed_theta = odom_msg_.twist.twist.angular.z;
-			}
-			if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
-				last_robot_movement = ros::Time::now();
-			double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
-			//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
-			boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
-			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
-					(distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
-					(robot_freeze_time > robot_freeze_timeout))
-				break;
-			ros::spinOnce();
-		}
+		waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance);
+//		double robot_freeze_timeout = -1.;	// [s]
+//		ros::Time last_robot_movement = ros::Time::now();
+//		while (true)
+//		{
+//			mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+//			double distance_to_goal = sqrt((target_pose.x()-robot_pose.x())*(target_pose.x()-robot_pose.x()) + (target_pose.y()-robot_pose.y())*(target_pose.y()-robot_pose.y()));
+//			double delta_angle = normalize_angle(target_pose.yaw()-robot_pose.yaw());
+//			if (robot_freeze_timeout < 0.)
+//				robot_freeze_timeout = 2. + 0.2*distance_to_goal;
+//			//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
+//			// also abort if the robot does not move for a long time
+//			{
+//				boost::mutex::scoped_lock lock(odom_msg_mutex_);
+//				robot_speed_x = odom_msg_.twist.twist.linear.x;
+//				robot_speed_theta = odom_msg_.twist.twist.angular.z;
+//			}
+//			if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
+//				last_robot_movement = ros::Time::now();
+//			double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
+//			//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
+//			boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
+//			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
+//					(distance_to_goal<goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
+//					(robot_freeze_time > robot_freeze_timeout))
+//				break;
+//			ros::spinOnce();
+//		}
 	}
 
 	std::cout << "  Path following successfully terminated." << std::endl;
@@ -749,11 +777,8 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstP
 			// get current robot speed
 			double robot_speed_x = 0.; // [m/s]
 			double robot_speed_theta = 0.;	// [rad/s]
-			{
-				boost::mutex::scoped_lock lock(odom_msg_mutex_);
-				robot_speed_x = odom_msg_.twist.twist.linear.x;
-				robot_speed_theta = odom_msg_.twist.twist.angular.z;
-			}
+			getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
+
 			// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
 			const double max_speed = 0.5;
 			const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
@@ -780,31 +805,33 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstP
 			r.wait();
 
 			// wait until close to target
-			const double robot_freeze_timeout = 4.;	// [s]
-			ros::Time last_robot_movement = ros::Time::now();
-			while (true)
-			{
-				mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
-				double distance_to_goal = (pose->val[0]-robot_pose.x())*(pose->val[0]-robot_pose.x()) + (pose->val[1]-robot_pose.y())*(pose->val[1]-robot_pose.y());
-				double delta_angle = normalize_angle(pose->val[2]-robot_pose.yaw());
-				//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
-				// also abort if the robot does not move for a long time
-				{
-					boost::mutex::scoped_lock lock(odom_msg_mutex_);
-					robot_speed_x = odom_msg_.twist.twist.linear.x;
-					robot_speed_theta = odom_msg_.twist.twist.angular.z;
-				}
-				if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
-					last_robot_movement = ros::Time::now();
-				double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
-				//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
-				boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
-				if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
-						(distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
-						(robot_freeze_time > robot_freeze_timeout))
-					break;
-				ros::spinOnce();
-			}
+			mira::Pose3 target_pose(pose->val[0], pose->val[1], 0., pose->val[2], 0., 0.);
+			waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance);
+//			const double robot_freeze_timeout = 4.;	// [s]
+//			ros::Time last_robot_movement = ros::Time::now();
+//			while (true)
+//			{
+//				mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+//				double distance_to_goal = (pose->val[0]-robot_pose.x())*(pose->val[0]-robot_pose.x()) + (pose->val[1]-robot_pose.y())*(pose->val[1]-robot_pose.y());
+//				double delta_angle = normalize_angle(pose->val[2]-robot_pose.yaw());
+//				//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
+//				// also abort if the robot does not move for a long time
+//				{
+//					boost::mutex::scoped_lock lock(odom_msg_mutex_);
+//					robot_speed_x = odom_msg_.twist.twist.linear.x;
+//					robot_speed_theta = odom_msg_.twist.twist.angular.z;
+//				}
+//				if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
+//					last_robot_movement = ros::Time::now();
+//				double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
+//				//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
+//				boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
+//				if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
+//						(distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
+//						(robot_freeze_time > robot_freeze_timeout))
+//					break;
+//				ros::spinOnce();
+//			}
 		}
 	}
 
