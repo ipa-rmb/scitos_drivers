@@ -90,6 +90,23 @@ void ScitosDrive::initialize() {
   barrier_status_.last_detection_stamp = ros::Time(0);
   robot_->registerSpinFunction(boost::bind(&ScitosDrive::publish_barrier_status, this));
 
+
+	// todo: read in robot radius
+	mira::RPCFuture<mira::robot::RobotModelPtr> r = robot_->getMiraAuthority().callService<mira::robot::RobotModelPtr>("/robot/Robot", "getRobotModel");
+	bool success = r.timedWait(mira::Duration::seconds(10));
+	if (success==true)
+	{
+		mira::robot::RobotModelPtr robot_model = r.get();
+		if (robot_model)
+		{
+			double robot_radius = robot_model->getFootprint().getInnerRadius();
+			mira::Footprint coverage_footprint = robot_model->getFootprint("", mira::Time::now(), "CleaningTool");
+			double coverage_radius = 0.5*(coverage_footprint.getOuterRadius()-coverage_footprint.getInnerRadius());	// todo: hack: only works for circle footprints
+			mira::RigidTransform3d coverage_offset = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/modules/brushcleaning/BrushFrame", "/robot/RobotFrame");
+			std::cout << "########## Robot Configuration ##########\nrobot_radius=" << robot_radius << "   coverage_radius=" << coverage_radius << "   coverage_offset=(" << coverage_offset.x() << ", " << coverage_offset.y() << ")" << std::endl;
+		}
+	}
+
 }
 
 void ScitosDrive::velocity_command_callback(const geometry_msgs::Twist::ConstPtr& msg) {
@@ -340,12 +357,6 @@ void ScitosDrive::publishCommandedTarget(const tf::StampedTransform& transform)
 // Option with normal move commands
 void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path)
 {
-	// todo: read in robot radius
-	mira::RPCFuture<mira::robot::RobotModelPtr> r = robot_->getMiraAuthority().callService<mira::robot::RobotModelPtr>("/robot/Robot", "getRobotModel");
-	bool success = r.timedWait(mira::Duration::seconds(10));
-	double robot_radius = r.get()->getFootprint().getInnerRadius();
-
-
 #ifdef __WITH_PILOT__
 	/*
 	 * https://www.mira-project.org/MIRA-doc/toolboxes/Navigation/classmira_1_1navigation_1_1PathFollowTask.html#_details
