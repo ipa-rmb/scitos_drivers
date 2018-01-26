@@ -88,8 +88,10 @@ private:
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
 	void waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance);
+	void publishComputedTarget(const tf::StampedTransform& transform);
 	void publishCommandedTarget(const tf::StampedTransform& transform);
-	ros::Publisher target_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
+	ros::Publisher computed_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
+	ros::Publisher commanded_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
 	std::string map_frame_;			// name of the map coordinate system
 	std::string robot_frame_;		// name of the robot base frame
 #endif

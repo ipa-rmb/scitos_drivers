@@ -53,7 +53,8 @@ void ScitosDrive::initialize() {
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
-  target_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/coverage_monitor_server/target_trajectory_monitor", 1);
+  computed_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/coverage_monitor_server/computed_target_trajectory_monitor", 1);
+  commanded_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/coverage_monitor_server/commanded_target_trajectory_monitor", 1);
 #endif
 #ifndef DISABLE_MOVEMENTS
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback, this);
@@ -224,7 +225,7 @@ void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid>
 {
 	// convert map to ROS format
 	nav_msgs::OccupancyGrid grid_msg;
-	grid_msg.header.stamp = ros::Time::now();
+	grid_msg.header.stamp = ros::Time::now();commanded_trajectory_pub_
 	grid_msg.header.frame_id = "map";
 	grid_msg.info.resolution = data->value().getCellSize();
 	grid_msg.info.width = data->value().width();
@@ -345,12 +346,20 @@ void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const fl
 	}
 }
 
+void ScitosDrive::publishComputedTarget(const tf::StampedTransform& transform)
+{
+	// publish commanded next target
+	geometry_msgs::TransformStamped transform_msg;
+	tf::transformStampedTFToMsg(transform, transform_msg);
+	computed_trajectory_pub_.publish(transform_msg);
+}
+
 void ScitosDrive::publishCommandedTarget(const tf::StampedTransform& transform)
 {
 	// publish commanded next target
 	geometry_msgs::TransformStamped transform_msg;
 	tf::transformStampedTFToMsg(transform, transform_msg);
-	target_trajectory_pub_.publish(transform_msg);
+	commanded_trajectory_pub_.publish(transform_msg);
 }
 #endif
 
@@ -376,6 +385,9 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
 				Eigen::Quaternionf(path->target_poses[i].pose.orientation.w, path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z));
 		std::cout << "  Next pose: " << target_pose.x() << ", " << target_pose.y() << ", " << target_pose.yaw() << std::endl;
+
+		// publish computed next target
+		publishComputedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_));
 
 		// check whether the next target pose is accessible and skip occluded targets
 		{
