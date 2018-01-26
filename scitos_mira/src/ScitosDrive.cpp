@@ -16,7 +16,7 @@
 
 #include <opencv2/opencv.hpp>
 
-#define DISABLE_MOVEMENTS	// todo: remove
+//#define DISABLE_MOVEMENTS	// todo: remove
 
 uint64 MAGNETIC_BARRIER_RFID_CODE=0xabababab;
 
@@ -51,10 +51,10 @@ void ScitosDrive::initialize() {
   robot_frame_ = "base_link";
   map_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>(map_frame_, 1, true);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
-  robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_data_callback, this);	// todo: hack:
+//  robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
-  computed_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/coverage_monitor_server/computed_target_trajectory_monitor", 1);
-  commanded_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/coverage_monitor_server/commanded_target_trajectory_monitor", 1);
+  computed_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/computed_target_trajectory_monitor", 1);
+  commanded_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/commanded_target_trajectory_monitor", 1);
 #endif
 #ifndef DISABLE_MOVEMENTS
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback, this);
@@ -91,7 +91,6 @@ void ScitosDrive::initialize() {
   barrier_status_.last_detection_stamp = ros::Time(0);
   robot_->registerSpinFunction(boost::bind(&ScitosDrive::publish_barrier_status, this));
 
-
 	// todo: read in robot radius
 	mira::RPCFuture<mira::robot::RobotModelPtr> r = robot_->getMiraAuthority().callService<mira::robot::RobotModelPtr>("/robot/Robot", "getRobotModel");
 	bool success = r.timedWait(mira::Duration::seconds(10));
@@ -107,7 +106,6 @@ void ScitosDrive::initialize() {
 			std::cout << "########## Robot Configuration ##########\nrobot_radius=" << robot_radius << "   coverage_radius=" << coverage_radius << "   coverage_offset=(" << coverage_offset.x() << ", " << coverage_offset.y() << ")" << std::endl;
 		}
 	}
-
 }
 
 void ScitosDrive::velocity_command_callback(const geometry_msgs::Twist::ConstPtr& msg) {
@@ -663,8 +661,8 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstP
 			for (int u=0; u<cost_map.cols; ++u)
 				if (level_set_map.at<uchar>(v,u) == 255)
 					temp.at<double>(v,u) = 0.;
-		cv::imshow("cost_map", temp);
-		cv::waitKey();
+//		cv::imshow("cost_map", temp);
+//		cv::waitKey(10);
 
 		// determine a preferred driving direction for each point
 		const double pi = 3.14159265359;

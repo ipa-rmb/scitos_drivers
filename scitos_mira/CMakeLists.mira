@@ -1,4 +1,3 @@
-
 message(STATUS "Detecting MIRA root directory")
 
 # Examines each path in MIRA_PATH in order to find the MIRA root directory, which
@@ -52,18 +51,22 @@ include(Dependencies)
 
 # Require MIRAFramework package
 mira_require_package(MIRAFramework)
+
 mira_optional_package(Navigation)
-mira_optional_package(Mapping)
 MIRA_FIND_PACKAGE(Navigation)
 message("-- PACKAGE_Navigation_FOUND = ${PACKAGE_Navigation_FOUND}")
+
+mira_optional_package(Mapping)
 MIRA_FIND_PACKAGE(Mapping)
 message("-- PACKAGE_Mapping_FOUND = ${PACKAGE_Mapping_FOUND}")
 
 mira_optional_package(PilotSmoothTransition)
 MIRA_FIND_PACKAGE(PilotSmoothTransition)
+message("-- PACKAGE_PilotSmoothTransition_FOUND = ${PACKAGE_PilotSmoothTransition_FOUND}")
 
 mira_optional_package(PilotWallDistance)
 MIRA_FIND_PACKAGE(PilotWallDistance)
+message("-- PACKAGE_PilotWallDistance_FOUND = ${PACKAGE_PilotWallDistance_FOUND}")
 
 ##############################################################################
 

@@ -13,7 +13,6 @@
 #include <geometry_msgs/Twist.h>
 #include <robot/Odometry.h> //# MIRA odometry
 #include <robot/RobotModel.h> //# MIRA robot model Package(RobotDataTypes)
-#include <maps/OccupancyGrid.h> //# MIRA occupancy grid map
 #include "scitos_mira/ScitosModule.h"
 #include <std_msgs/Bool.h>
 #include <scitos_msgs/ResetMotorStop.h>
@@ -36,14 +35,14 @@
 
 //includes for move_base
 #ifdef __WITH_PILOT__
-#include <navigation/tasks/PositionTask.h>
 #include <pilot/SmoothTransitionTask.h>
 #include <pilot/WallDistanceTask.h>
-#include <navigation/tasks/PreferredDirectionTask.h>
 #include <navigation/Task.h>
+#include <navigation/tasks/PositionTask.h>
 #include <navigation/tasks/OrientationTask.h>
+#include <navigation/tasks/PreferredDirectionTask.h>
 #include <navigation/tasks/PathFollowTask.h>
-#include <maps/OccupancyGrid.h>
+#include <maps/OccupancyGrid.h> //# MIRA occupancy grid map
 #include <geometry_msgs/TransformStamped.h>
 #include <tf/tf.h>
 #endif
@@ -133,8 +132,10 @@ private:
     nav_msgs::Odometry odom_msg_;
     boost::mutex odom_msg_mutex_;
 
+#ifdef __WITH_PILOT__
     mira::maps::GridMap<double,1> cost_map_;
     boost::mutex cost_map_mutex_;
+#endif
 };
 
 #endif

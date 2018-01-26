@@ -62,9 +62,9 @@ int main(int argc, char **argv) {
 	  for (int i=1; i<argc;i++)
 		args.push_back(std::string(argv[i]));
 	}
-	
+
 	mira::Framework framework(args, true);
-	
+
 	while (!framework.isInExec()) {
 	  boost::this_thread::sleep(boost::posix_time::milliseconds(50));
 	}
@@ -78,7 +78,6 @@ int main(int argc, char **argv) {
 		    "list of SCITOS hardware modules to interface into ROS"); 
 	  return 1;
 	}
-	  
 
 	ROS_INFO_STREAM("Creating G5 with modules [" << scitos_modules << "]");
 	std::vector<std::string> modules;
