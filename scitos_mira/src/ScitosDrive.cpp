@@ -225,7 +225,7 @@ void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid>
 {
 	// convert map to ROS format
 	nav_msgs::OccupancyGrid grid_msg;
-	grid_msg.header.stamp = ros::Time::now();commanded_trajectory_pub_
+	grid_msg.header.stamp = ros::Time::now();
 	grid_msg.header.frame_id = "map";
 	grid_msg.info.resolution = data->value().getCellSize();
 	grid_msg.info.width = data->value().width();
