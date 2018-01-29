@@ -45,6 +45,7 @@
 #include <maps/OccupancyGrid.h> //# MIRA occupancy grid map
 #include <geometry_msgs/TransformStamped.h>
 #include <tf/tf.h>
+#include <cv_bridge/cv_bridge.h>
 #endif
 
 #include <boost/thread/mutex.hpp>
@@ -83,6 +84,7 @@ private:
 	ScitosDrive();
 
 #ifdef __WITH_PILOT__
+	void writeParametersToROSParamServer();
 	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
@@ -93,6 +95,9 @@ private:
 	ros::Publisher commanded_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
 	std::string map_frame_;			// name of the map coordinate system
 	std::string robot_frame_;		// name of the robot base frame
+	double robot_radius_;		// the radius of the inner circle of the bounding box of the robot footprint, in [m]
+	double coverage_radius_;		// the radius of the area of the coverage device (cleaner, camera, ...), in [m]
+	mira::RigidTransform3d coverage_offset_;		// the center offset of the area of the coverage device (cleaner, camera, ...) against robot_frame_, in [m]
 #endif
 
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base

@@ -55,6 +55,9 @@ void ScitosDrive::initialize() {
   robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
   computed_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/computed_target_trajectory_monitor", 1);
   commanded_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/commanded_target_trajectory_monitor", 1);
+
+  // read in robot radius, coverage radius, and coverage area center offset against robot base link
+  writeParametersToROSParamServer();
 #endif
 #ifndef DISABLE_MOVEMENTS
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback, this);
@@ -90,22 +93,6 @@ void ScitosDrive::initialize() {
   barrier_status_.barrier_stopped = false;
   barrier_status_.last_detection_stamp = ros::Time(0);
   robot_->registerSpinFunction(boost::bind(&ScitosDrive::publish_barrier_status, this));
-
-	// todo: read in robot radius
-	mira::RPCFuture<mira::robot::RobotModelPtr> r = robot_->getMiraAuthority().callService<mira::robot::RobotModelPtr>("/robot/Robot", "getRobotModel");
-	bool success = r.timedWait(mira::Duration::seconds(10));
-	if (success==true)
-	{
-		mira::robot::RobotModelPtr robot_model = r.get();
-		if (robot_model)
-		{
-			double robot_radius = robot_model->getFootprint().getInnerRadius();
-			mira::Footprint coverage_footprint = robot_model->getFootprint("", mira::Time::now(), "CleaningTool");
-			double coverage_radius = 0.5*(coverage_footprint.getOuterRadius()-coverage_footprint.getInnerRadius());	// todo: hack: only works for circle footprints
-			mira::RigidTransform3d coverage_offset = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/modules/brushcleaning/BrushFrame", "/robot/RobotFrame");
-			std::cout << "########## Robot Configuration ##########\nrobot_radius=" << robot_radius << "   coverage_radius=" << coverage_radius << "   coverage_offset=(" << coverage_offset.x() << ", " << coverage_offset.y() << ")" << std::endl;
-		}
-	}
 }
 
 void ScitosDrive::velocity_command_callback(const geometry_msgs::Twist::ConstPtr& msg) {
@@ -219,6 +206,41 @@ void ScitosDrive::odometry_data_callback(mira::ChannelRead<mira::robot::Odometry
 }
 
 #ifdef __WITH_PILOT__
+void ScitosDrive::writeParametersToROSParamServer()
+{
+	// read in robot radius, coverage radius, and coverage area center offset against robot base link
+	mira::RPCFuture<mira::robot::RobotModelPtr> r = robot_->getMiraAuthority().callService<mira::robot::RobotModelPtr>("/robot/Robot", "getRobotModel");
+	bool success = r.timedWait(mira::Duration::seconds(10));
+	std::cout << "########## Robot Configuration ##########" << std::endl;
+	robot_radius_ = 0.325;
+	coverage_radius_ = 0.25;
+	coverage_offset_ = mira::RigidTransform3d(0.29, -0.114, 0.0, 0.0, 0.0, 0.0);
+	if (success==true)
+	{
+		mira::robot::RobotModelPtr robot_model = r.get();
+		if (robot_model)
+		{
+			robot_radius_ = robot_model->getFootprint().getInnerRadius();
+			mira::Footprint coverage_footprint = robot_model->getFootprint("", mira::Time::now(), "CleaningTool");
+			coverage_radius_ = 0.5*(coverage_footprint.getOuterRadius()-coverage_footprint.getInnerRadius());	// todo: hack: only works for circle footprints
+			coverage_offset_ = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/modules/brushcleaning/BrushFrame", "/robot/RobotFrame");
+		}
+		else
+			std::cout << "Error: could not read robot parameters. Taking standard values." << std::endl;
+	}
+	else
+		std::cout << "Error: could not read robot parameters. Taking standard values." << std::endl;
+	std::cout << "robot_radius=" << robot_radius_ << "   coverage_radius=" << coverage_radius_ << "   coverage_offset=(" << coverage_offset_.x() << ", " << coverage_offset_.y() << ")\n" << std::endl;
+
+	// write parameters to ROS parameter server
+	robot_->getRosNode().setParam("map_frame", map_frame_);
+	robot_->getRosNode().setParam("robot_frame", robot_frame_);
+	robot_->getRosNode().setParam("robot_radius", robot_radius_);
+	robot_->getRosNode().setParam("coverage_radius", coverage_radius_);
+	robot_->getRosNode().setParam("coverage_offset_x", coverage_offset_.x());
+	robot_->getRosNode().setParam("coverage_offset_y", coverage_offset_.y());
+}
+
 void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
 {
 	// convert map to ROS format
@@ -376,6 +398,11 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	const float goal_angle_tolerance = (path->goal_angle_tolerance>0.f ? path->goal_angle_tolerance : 0.17f);
 	const double pi = 3.14159265359;
 
+	// convert the area_map msg in cv format
+	cv_bridge::CvImagePtr cv_ptr_obj;
+	cv_ptr_obj = cv_bridge::toCvCopy(path->area_map, sensor_msgs::image_encodings::MONO8);
+	const cv::Mat area_map = cv_ptr_obj->image;
+
 	// follow path
 	for (size_t i=0; i<path->target_poses.size(); ++i)
 	{
@@ -387,7 +414,8 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		// publish computed next target
 		publishComputedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_));
 
-		// check whether the next target pose is accessible and skip occluded targets
+		// check whether the next target pose is accessible (i.e. cost_map < 0.89) and shift occluded targets into accessible space
+		const double cost_map_threshold = 0.89;
 		{
 			boost::mutex::scoped_lock lock(cost_map_mutex_);
 			if (cost_map_.getMat().empty() != true)
@@ -399,12 +427,63 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 				//cv::circle(temp, target_position_pixel, 2, cv::Scalar(0.5), -1);
 				//cv::imshow("cost_map", temp);
 				//cv::waitKey(10);
-				if (cost_map.at<double>(target_position_pixel) >= 0.89)
-					continue;
+				if (cost_map.at<double>(target_position_pixel) >= cost_map_threshold)
+				{
+					std::cout << "  -  Target (" << target_pose.x() << ", " << target_pose.y() << ")=(" << target_position_pixel.x << ", " << target_position_pixel.y << "),   value: " << cost_map.at<double>(target_position_pixel) << "    is not accessible." << std::endl;
+					// try to shift target perpendicular to driving direction by at most coverage_radius distance,
+					// accept the closest accessible target left or right which is still located within the allowed area of path->area_map
+					cv::Point target_position_pixel_left, target_position_pixel_right;
+					double distance_target_left = DBL_MAX, distance_target_right = DBL_MAX;
+					const cv::Point direction_max_left(-1.2*coverage_radius_/cost_map_.getCellSize()*sin(target_pose.yaw()), 1.2*coverage_radius_/cost_map_.getCellSize()*cos(target_pose.yaw()));
+					cv::LineIterator line_left(cost_map, target_position_pixel, target_position_pixel+direction_max_left, 8, false);
+					for (int l=0; l<line_left.count; ++l, ++line_left)
+					{
+						if (*((const double*)*line_left)<cost_map_threshold && area_map.at<uchar>(line_left.pos())==255)
+						{
+							target_position_pixel_left = line_left.pos();
+							distance_target_left = cv::norm(line_left.pos()-target_position_pixel);
+							break;
+						}
+					}
+					cv::LineIterator line_right(cost_map, target_position_pixel, target_position_pixel-direction_max_left, 8, false);
+					for (int l=0; l<line_right.count; ++l, ++line_right)
+					{
+						if (*((const double*)*line_right)<cost_map_threshold && area_map.at<uchar>(line_right.pos())==255)
+						{
+							target_position_pixel_right = line_right.pos();
+							distance_target_right = cv::norm(line_right.pos()-target_position_pixel);
+							break;
+						}
+					}
+
+					// evaluate results
+					if (distance_target_left>1e20 && distance_target_right>1e20)
+					{
+						// abort if no accessible pixel was found
+						std::cout << "  -> No alternative target found." << std::endl;
+						continue;
+					}
+					else
+					{
+						// set new target pose
+						if (distance_target_left < distance_target_right)
+						{
+							target_pose.x() = target_position_pixel_left.x*cost_map_.getCellSize() - cost_map_.getWorldOffset()[0];
+							target_pose.y() = target_position_pixel_left.y*cost_map_.getCellSize() - cost_map_.getWorldOffset()[1];
+							std::cout << "  -> Alternative target (" << target_pose.x() << ", " << target_pose.y() << ")=(" << target_position_pixel_left.x << ", " << target_position_pixel_left.y << "),   value: " << cost_map.at<double>(target_position_pixel_left) << "    found." << std::endl;
+						}
+						else
+						{
+							target_pose.x() = target_position_pixel_right.x*cost_map_.getCellSize() - cost_map_.getWorldOffset()[0];
+							target_pose.y() = target_position_pixel_right.y*cost_map_.getCellSize() - cost_map_.getWorldOffset()[1];
+							std::cout << "  -> Alternative target (" << target_pose.x() << ", " << target_pose.y() << ")=(" << target_position_pixel_right.x << ", " << target_position_pixel_right.y << "),   value: " << cost_map.at<double>(target_position_pixel_right) << "    found." << std::endl;
+						}
+					}
+				}
 			}
 		}
 		// publish commanded next target
-		publishCommandedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_));
+		publishCommandedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(target_pose.r.x(), target_pose.r.y(), target_pose.r.z(), target_pose.r.w()), tf::Vector3(target_pose.x(), target_pose.y(), target_pose.z())), ros::Time::now(), map_frame_, robot_frame_));
 
 		// get current robot speed
 		double robot_speed_x = 0.; // [m/s]
@@ -441,33 +520,6 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 
 		// wait until close to target
 		waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance);
-//		double robot_freeze_timeout = -1.;	// [s]
-//		ros::Time last_robot_movement = ros::Time::now();
-//		while (true)
-//		{
-//			mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
-//			double distance_to_goal = sqrt((target_pose.x()-robot_pose.x())*(target_pose.x()-robot_pose.x()) + (target_pose.y()-robot_pose.y())*(target_pose.y()-robot_pose.y()));
-//			double delta_angle = normalize_angle(target_pose.yaw()-robot_pose.yaw());
-//			if (robot_freeze_timeout < 0.)
-//				robot_freeze_timeout = 2. + 0.2*distance_to_goal;
-//			//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
-//			// also abort if the robot does not move for a long time
-//			{
-//				boost::mutex::scoped_lock lock(odom_msg_mutex_);
-//				robot_speed_x = odom_msg_.twist.twist.linear.x;
-//				robot_speed_theta = odom_msg_.twist.twist.angular.z;
-//			}
-//			if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
-//				last_robot_movement = ros::Time::now();
-//			double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
-//			//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
-//			boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
-//			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
-//					(distance_to_goal<goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
-//					(robot_freeze_time > robot_freeze_timeout))
-//				break;
-//			ros::spinOnce();
-//		}
 	}
 
 	std::cout << "  Path following successfully terminated." << std::endl;
