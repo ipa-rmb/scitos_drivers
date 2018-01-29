@@ -262,6 +262,8 @@ void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid>
 		for (int u=0; u<map.cols; ++u, ++i, ++map_ptr)
 		{
 			char value = (char)((double)*map_ptr*100./255);
+			// invert values: 255 in MIRA is 100 in ROS = obstacle, 0 in MIRA is 0 in ROS = free space
+			// further obey that accessible areas are any value <=100 in MIRA, i.e. <=39.2 in ROS
 			value = (value < 5 ? 0 : value);
 			value = (value > 95 ? 100 : value);
 			grid_msg.data[i] = value;
