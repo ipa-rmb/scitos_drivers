@@ -397,7 +397,7 @@ void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const fl
 		double robot_speed_x = 0.; // [m/s]
 		double robot_speed_theta = 0.;	// [rad/s]
 		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
-		if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
+		if (fabs(robot_speed_x) > 0.02 || fabs(robot_speed_theta) > 0.04)
 			last_robot_movement = ros::Time::now();
 		// todo: check for non-moving condition (robot location)
 		double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
@@ -545,7 +545,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		const double max_speed_x = 0.6;	// in [m/s]
 		const double max_speed_phi = mira::deg2rad(60.f);	// in [rad/s]
 
-		goal_position_tolerance = 0.4 + robot_speed_x * desired_planning_ahead_time*2.;
+		goal_position_tolerance = 0.4 + 2.*robot_speed_x * desired_planning_ahead_time;
 
 		// command new navigation goal
 		mira::navigation::TaskPtr task(new mira::navigation::Task());
