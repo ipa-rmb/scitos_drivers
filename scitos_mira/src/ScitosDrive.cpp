@@ -366,6 +366,7 @@ void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const fl
 	ros::Time last_robot_movement = ros::Time::now();
 	while (true)
 	{
+		// todo: instead of "/maps/MapFrame" use the frame of the PositionTask (provide PositionTask to this function) for multi level buildings with multiple maps
 		mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
 		const double distance_to_goal = sqrt((target_pose.x()-robot_pose.x())*(target_pose.x()-robot_pose.x()) + (target_pose.y()-robot_pose.y())*(target_pose.y()-robot_pose.y()));
 		const double delta_angle = normalize_angle(target_pose.yaw()-robot_pose.yaw());
@@ -375,7 +376,7 @@ void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const fl
 		if (robot_freeze_timeout < 0.)
 			robot_freeze_timeout = 2. + 0.2*distance_to_goal;
 
-		// also abort if the robot does not move for a long time
+		// todo: also abort if the robot does not move for a long time
 		double robot_speed_x = 0.; // [m/s]
 		double robot_speed_theta = 0.;	// [rad/s]
 		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
@@ -420,8 +421,10 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	 */
 	ROS_INFO("ScitosDrive::path_callback: Following a path.");
 
-	const float path_tolerance = (path->path_tolerance>0.f ? path->path_tolerance : 0.1f);
-	const float goal_position_tolerance = (path->goal_position_tolerance>0.f ? path->goal_position_tolerance : 0.1f);
+	const double desired_planning_ahead_time = 0.;	// used for computing goal_position_tolerance, in [s]
+
+	//const float path_tolerance = (path->path_tolerance>0.f ? path->path_tolerance : 0.1f);
+	float goal_position_tolerance = (path->goal_position_tolerance>0.f ? path->goal_position_tolerance : 0.1f);
 	const float goal_angle_tolerance = (path->goal_angle_tolerance>0.f ? path->goal_angle_tolerance : 0.17f);
 	const double pi = 3.14159265359;
 
@@ -433,6 +436,8 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	// follow path
 	for (size_t i=0; i<path->target_poses.size(); ++i)
 	{
+		mira::Time start_time = mira::Time::now();
+
 		// convert target pose to mira::Pose3
 		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
 				Eigen::Quaternionf(path->target_poses[i].pose.orientation.w, path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z));
@@ -519,14 +524,16 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 
 		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
 		const double max_speed = 0.5;
-		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
-		const double max_speed_x = 0.3;	// in [m/s]
-		const double max_speed_phi = mira::deg2rad(30.f);	// in [rad/s]
+		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;	// only takes effect if the robot ever reaches the goal exactly
+		const double max_speed_x = 0.6;	// in [m/s]
+		const double max_speed_phi = mira::deg2rad(60.f);	// in [rad/s]
+
+		goal_position_tolerance = 0.4 + robot_speed_x * desired_planning_ahead_time*2.;
 
 		// command new navigation goal
 		mira::navigation::TaskPtr task(new mira::navigation::Task());
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(target_pose.x(), target_pose.y()),
-				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
+				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/maps/MapFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(true, true)));
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target_pose.yaw(), 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::VelocityTask(mira::Velocity2(max_speed_x, 0.0, max_speed_phi))));	// limit the max allowed speed
@@ -536,6 +543,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		// Set this as our goal. Will cause the robot to start driving.
 		mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
 		r.wait();
+		std::cout << " --- " << (mira::Time::now()-start_time).totalMilliseconds()<< "ms" << std::endl;
 
 		// wait until close to target
 		waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance);
@@ -905,7 +913,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstP
 		// command new navigation goal
 		mira::navigation::TaskPtr task(new mira::navigation::Task());
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(pose->val[0], pose->val[1]),
-				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
+				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/maps/MapFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(true, true)));
 //		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(pose->val[0], pose->val[1]),
 //				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
