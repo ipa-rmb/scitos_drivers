@@ -381,6 +381,7 @@ void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const fl
 		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
 		if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
 			last_robot_movement = ros::Time::now();
+		// todo: check for non-moving condition (robot location)
 		double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
 		//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
 		boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
@@ -441,7 +442,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		publishComputedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_));
 
 		// check whether the next target pose is accessible (i.e. cost_map < 0.89) and shift occluded targets into accessible space
-		const double cost_map_threshold = 0.89;
+		const double cost_map_threshold = 0.5;	// this is an obstacle distance of inner_circle_radius + 0.1 + 0.2 //0.89;
 		{
 			boost::mutex::scoped_lock lock(cost_map_mutex_);
 			if (cost_map_.getMat().empty() != true)
