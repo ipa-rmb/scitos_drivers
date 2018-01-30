@@ -98,6 +98,8 @@ private:
 	ros::Publisher computed_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
 	ros::Publisher commanded_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
 	std::string map_frame_;			// name of the map coordinate system
+	std::string map_clean_frame_;		// name of the map-clean coordinate system
+	std::string map_segmented_frame_;	// name of the map-segmented coordinate system
 	std::string robot_frame_;		// name of the robot base frame
 	double robot_radius_;		// the radius of the inner circle of the bounding box of the robot footprint, in [m]
 	double coverage_radius_;		// the radius of the area of the coverage device (cleaner, camera, ...), in [m]
