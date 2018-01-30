@@ -249,18 +249,21 @@ void ScitosDrive::writeParametersToROSParamServer()
 void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
 {
 	// convert map to ROS format
+	ROS_INFO_STREAM("Received map " << map_frame_);
 	publish_grid_map(data->value(), map_pub_, map_frame_);
 }
 
 void ScitosDrive::map_clean_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
 {
 	// convert map to ROS format
+	ROS_INFO_STREAM("Received map " << map_clean_frame_);
 	publish_grid_map(data->value(), map_clean_pub_, map_clean_frame_);	// todo: hack: using a separately edited map as the "real" map for planning
 }
 
 void ScitosDrive::map_segmented_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
 {
 	// convert map to ROS format
+	ROS_INFO_STREAM("Received map " << map_segmented_frame_);
 	publish_grid_map(data->value(), map_segmented_pub_, map_segmented_frame_);
 }
 
