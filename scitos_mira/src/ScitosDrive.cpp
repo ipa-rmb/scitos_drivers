@@ -461,7 +461,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 					// accept the closest accessible target left or right which is still located within the allowed area of path->area_map
 					cv::Point target_position_pixel_left, target_position_pixel_right;
 					double distance_target_left = DBL_MAX, distance_target_right = DBL_MAX;
-					const cv::Point direction_max_left(-1.2*coverage_radius_/cost_map_.getCellSize()*sin(target_pose.yaw()), 1.2*coverage_radius_/cost_map_.getCellSize()*cos(target_pose.yaw()));
+					const cv::Point direction_max_left(-2.0*coverage_radius_/cost_map_.getCellSize()*sin(target_pose.yaw()), 2.0*coverage_radius_/cost_map_.getCellSize()*cos(target_pose.yaw()));
 					cv::LineIterator line_left(cost_map, target_position_pixel, target_position_pixel+direction_max_left, 8, false);
 					for (int l=0; l<line_left.count; ++l, ++line_left)
 					{
