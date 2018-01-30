@@ -47,9 +47,13 @@ void ScitosDrive::initialize() {
   robot_->getMiraAuthority().subscribe<std::string>("/navigation/PilotEvent", &ScitosDrive::nav_pilot_event_status_callback, this);
 
   // maps
-  map_frame_ = "map";
+  map_frame_ = "map_original";
+  map_clean_frame_ = "map";
+  map_segmented_frame_ = "map_segmented";
   robot_frame_ = "base_link";
   map_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>(map_frame_, 1, true);
+  map_clean_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>(map_clean_frame_, 1, true);
+  map_segmented_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>(map_segmented_frame_, 1, true);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_clean_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/segmentation/Map", &ScitosDrive::map_segmented_data_callback, this);
@@ -245,19 +249,19 @@ void ScitosDrive::writeParametersToROSParamServer()
 void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
 {
 	// convert map to ROS format
-	publish_grid_map(data->value(), map_pub_, "map_original");
+	publish_grid_map(data->value(), map_pub_, map_frame_);
 }
 
 void ScitosDrive::map_clean_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
 {
 	// convert map to ROS format
-	publish_grid_map(data->value(), map_clean_pub_, "map");	// todo: hack: using a separately edited map as the "real" map for planning
+	publish_grid_map(data->value(), map_clean_pub_, map_clean_frame_);	// todo: hack: using a separately edited map as the "real" map for planning
 }
 
 void ScitosDrive::map_segmented_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
 {
 	// convert map to ROS format
-	publish_grid_map(data->value(), map_segmented_pub_, "map_segmented");
+	publish_grid_map(data->value(), map_segmented_pub_, map_segmented_frame_);
 }
 
 void ScitosDrive::publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id)
