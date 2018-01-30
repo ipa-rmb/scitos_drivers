@@ -51,7 +51,8 @@ void ScitosDrive::initialize() {
   robot_frame_ = "base_link";
   map_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>(map_frame_, 1, true);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
-//  robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_data_callback, this);	// todo: hack:
+  robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_clean_data_callback, this);	// todo: hack:
+  robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/segmentation/Map", &ScitosDrive::map_segmented_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
   computed_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/computed_target_trajectory_monitor", 1);
   commanded_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/commanded_target_trajectory_monitor", 1);
@@ -244,16 +245,34 @@ void ScitosDrive::writeParametersToROSParamServer()
 void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
 {
 	// convert map to ROS format
+	publish_grid_map(data->value(), map_pub_, "map_original");
+}
+
+void ScitosDrive::map_clean_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
+{
+	// convert map to ROS format
+	publish_grid_map(data->value(), map_clean_pub_, "map");	// todo: hack: using a separately edited map as the "real" map for planning
+}
+
+void ScitosDrive::map_segmented_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data)
+{
+	// convert map to ROS format
+	publish_grid_map(data->value(), map_segmented_pub_, "map_segmented");
+}
+
+void ScitosDrive::publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id)
+{
+	// convert map to ROS format
 	nav_msgs::OccupancyGrid grid_msg;
 	grid_msg.header.stamp = ros::Time::now();
-	grid_msg.header.frame_id = "map";
-	grid_msg.info.resolution = data->value().getCellSize();
-	grid_msg.info.width = data->value().width();
-	grid_msg.info.height = data->value().height();
-	grid_msg.info.origin.position.x = -data->value().getWorldOffset()[0];
-	grid_msg.info.origin.position.y = -data->value().getWorldOffset()[1];
+	grid_msg.header.frame_id = frame_id;
+	grid_msg.info.resolution = data.getCellSize();
+	grid_msg.info.width = data.width();
+	grid_msg.info.height = data.height();
+	grid_msg.info.origin.position.x = -data.getWorldOffset()[0];
+	grid_msg.info.origin.position.y = -data.getWorldOffset()[1];
 
-	cv::Mat map = data->value().getMat();
+	cv::Mat map = data.getMat();
 	grid_msg.data.resize(map.cols*map.rows);
 	int i=0;
 	for (int v=0; v<map.rows; ++v)
@@ -270,8 +289,8 @@ void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid>
 		}
 	}
 
-	map_pub_.publish(grid_msg);
-//	cv::imshow("map", map);
+	pub.publish(grid_msg);
+//	cv::imshow(frame_id, map);
 //	cv::waitKey();
 }
 
