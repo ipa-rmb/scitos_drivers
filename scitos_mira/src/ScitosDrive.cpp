@@ -360,12 +360,29 @@ void ScitosDrive::getCurrentRobotSpeed(double& robot_speed_x, double& robot_spee
 }
 
 
-void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance)
+void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold)
 {
+	cv::Point target_position_pixel(-1,-1);
+	if (cost_map_threshold >= 0)
+	{
+		boost::mutex::scoped_lock lock(cost_map_mutex_);
+		if (cost_map_.getMat().empty() != true)
+			target_position_pixel = cv::Point(target_pose.x()+cost_map_.getWorldOffset()[0]/cost_map_.getCellSize(), target_pose.y()+cost_map_.getWorldOffset()[1]/cost_map_.getCellSize());
+	}
 	double robot_freeze_timeout = -1.;	// [s]
 	ros::Time last_robot_movement = ros::Time::now();
 	while (true)
 	{
+		// check if the target pose is still accessible
+		bool target_inaccessible = false;
+		if (target_position_pixel.x==-1 && target_position_pixel.y==-1)
+		{
+			boost::mutex::scoped_lock lock(cost_map_mutex_);
+			const cv::Mat& cost_map = cost_map_.getMat();
+			if (cost_map.empty()==false && cost_map.at<double>(target_position_pixel) >= cost_map_threshold)
+				target_inaccessible = true;
+		}
+
 		// todo: instead of "/maps/MapFrame" use the frame of the PositionTask (provide PositionTask to this function) for multi level buildings with multiple maps
 		mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
 		const double distance_to_goal = sqrt((target_pose.x()-robot_pose.x())*(target_pose.x()-robot_pose.x()) + (target_pose.y()-robot_pose.y())*(target_pose.y()-robot_pose.y()));
@@ -386,7 +403,7 @@ void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const fl
 		double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
 		//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
 		boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
-		if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
+		if (target_inaccessible==true || nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
 				(distance_to_goal<goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
 				(robot_freeze_time > robot_freeze_timeout))
 			break;
@@ -546,7 +563,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		std::cout << " --- " << (mira::Time::now()-start_time).totalMilliseconds()<< "ms" << std::endl;
 
 		// wait until close to target
-		waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance);
+		waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance, cost_map_threshold);
 	}
 
 	std::cout << "  Path following successfully terminated." << std::endl;

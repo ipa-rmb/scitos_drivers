@@ -92,7 +92,7 @@ private:
 	void publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
-	void waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance);
+	void waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold=-1);
 	void publishComputedTarget(const tf::StampedTransform& transform);
 	void publishCommandedTarget(const tf::StampedTransform& transform);
 	ros::Publisher computed_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
