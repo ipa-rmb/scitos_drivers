@@ -40,6 +40,7 @@
 #include <navigation/Task.h>
 #include <navigation/tasks/PositionTask.h>
 #include <navigation/tasks/OrientationTask.h>
+#include <navigation/tasks/VelocityTask.h>
 #include <navigation/tasks/PreferredDirectionTask.h>
 #include <navigation/tasks/PathFollowTask.h>
 #include <maps/OccupancyGrid.h> //# MIRA occupancy grid map

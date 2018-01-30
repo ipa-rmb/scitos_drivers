@@ -493,6 +493,8 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
 		const double max_speed = 0.5;
 		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
+		const double max_speed_x = 0.3;	// in [m/s]
+		const double max_speed_phi = mira::deg2rad(30.f);	// in [rad/s]
 
 		// command new navigation goal
 		mira::navigation::TaskPtr task(new mira::navigation::Task());
@@ -500,6 +502,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(true, true)));
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target_pose.yaw(), 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::VelocityTask(mira::Velocity2(max_speed_x, 0.0, max_speed_phi))));	// limit the max allowed speed
 		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
 
