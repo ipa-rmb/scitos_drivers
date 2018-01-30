@@ -87,6 +87,9 @@ private:
 #ifdef __WITH_PILOT__
 	void writeParametersToROSParamServer();
 	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
+	void map_clean_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
+	void map_segmented_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
+	void publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
 	void waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance);
@@ -114,6 +117,8 @@ private:
 
 	ros::Subscriber cmd_vel_subscriber_;
 	ros::Publisher map_pub_;
+	ros::Publisher map_clean_pub_;
+	ros::Publisher map_segmented_pub_;
 	ros::Publisher odometry_pub_;
 	ros::Publisher bumper_pub_;
 	ros::Publisher mileage_pub_;
