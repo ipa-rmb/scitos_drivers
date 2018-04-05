@@ -50,17 +50,26 @@ void ScitosDrive::initialize() {
   map_frame_ = "map";
   robot_frame_ = "base_link";
   map_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("map_original", 1, true);
-  map_clean_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("map", 1, true);
+  map_clean_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("map", 1, true);	// todo: hack
   map_segmented_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("map_segmented", 1, true);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_clean_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/segmentation/Map", &ScitosDrive::map_segmented_data_callback, this);
-  robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
+  robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this); // todo: obsolete?
+  merged_map_channel_ = robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid >("/3d/MergedMap");
   computed_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/computed_target_trajectory_monitor", 1);
   commanded_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/commanded_target_trajectory_monitor", 1);
 
   // read in robot radius, coverage radius, and coverage area center offset against robot base link
   writeParametersToROSParamServer();
+
+  if (!footprint_.empty()) {
+	  mira::ChannelRead<mira::maps::OccupancyGrid> merged_map = robot_->getMiraAuthority().waitForData(merged_map_channel_, mira::Duration::seconds(10));
+	  if (!merged_map.isValid())
+		  ROS_ERROR("Cannot read merged map channel '/3d/MergedMap'");
+	  else
+		  collision_test_.initialize(footprint_, merged_map->getCellSize());
+  }
 #endif
 #ifndef DISABLE_MOVEMENTS
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback, this);
@@ -223,7 +232,8 @@ void ScitosDrive::writeParametersToROSParamServer()
 		mira::robot::RobotModelPtr robot_model = r.get();
 		if (robot_model)
 		{
-			robot_radius_ = robot_model->getFootprint().getInnerRadius();
+			footprint_ = robot_model->getFootprint();
+			robot_radius_ = footprint_.getInnerRadius();
 			mira::Footprint coverage_footprint = robot_model->getFootprint("", mira::Time::now(), "CleaningTool");
 			coverage_radius_ = 0.5*(coverage_footprint.getOuterRadius()-coverage_footprint.getInnerRadius());	// todo: hack: only works for circle footprints
 			coverage_offset_ = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/modules/brushcleaning/BrushFrame", "/robot/RobotFrame");
@@ -248,6 +258,8 @@ void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid>
 {
 	// convert map to ROS format
 	ROS_INFO("ScitosDrive::map_data_callback: Received map.");
+	map_world_offset_ = cv::Point2d(data->getWorldOffset()[0], data->getWorldOffset()[1]);
+	map_resolution_ = data->getCellSize();
 	publish_grid_map(data->value(), map_pub_, map_frame_);
 }
 
@@ -305,6 +317,7 @@ void ScitosDrive::cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<d
 	boost::mutex::scoped_lock lock(cost_map_mutex_);
 	cost_map_ = data->clone();
 }
+
 #endif
 
 void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string> data)
@@ -375,7 +388,7 @@ void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const fl
 	{
 		// check if the target pose is still accessible
 		bool target_inaccessible = false;
-		if (target_position_pixel.x==-1 && target_position_pixel.y==-1)
+		if (cost_map_threshold >= 0 && target_position_pixel.x==-1 && target_position_pixel.y==-1)
 		{
 			boost::mutex::scoped_lock lock(cost_map_mutex_);
 			const cv::Mat& cost_map = cost_map_.getMat();
@@ -464,72 +477,138 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		publishComputedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_));
 
 		// check whether the next target pose is accessible (i.e. cost_map < 0.89) and shift occluded targets into accessible space
-		const double cost_map_threshold = 0.45;	// this is an obstacle distance of inner_circle_radius + 0.1 (min_dist=0.90) + 0.5 (max_dist=0.00) //0.89;
-		{
-			boost::mutex::scoped_lock lock(cost_map_mutex_);
-			if (cost_map_.getMat().empty() != true)
-			{
-				const cv::Mat& cost_map = cost_map_.getMat();
-				cv::Point target_position_pixel((target_pose.x()+cost_map_.getWorldOffset()[0])/cost_map_.getCellSize(), (target_pose.y()+cost_map_.getWorldOffset()[1])/cost_map_.getCellSize());
-				//std::cout << "target_position_pixel: (" << target_position_pixel.x << ", " << target_position_pixel.y << "),   value: " << cost_map.at<double>(target_position_pixel) << std::endl;
-				//cv::Mat temp = cost_map.clone();
-				//cv::circle(temp, target_position_pixel, 2, cv::Scalar(0.5), -1);
-				//cv::imshow("cost_map", temp);
-				//cv::waitKey(10);
-				if (cost_map.at<double>(target_position_pixel) >= cost_map_threshold)
-				{
-					std::cout << "  -  Target (" << target_pose.x() << ", " << target_pose.y() << ")=(" << target_position_pixel.x << ", " << target_position_pixel.y << "),   value: " << cost_map.at<double>(target_position_pixel) << "    is not accessible." << std::endl;
-					// try to shift target perpendicular to driving direction by at most coverage_radius distance,
-					// accept the closest accessible target left or right which is still located within the allowed area of path->area_map
-					cv::Point target_position_pixel_left, target_position_pixel_right;
-					double distance_target_left = DBL_MAX, distance_target_right = DBL_MAX;
-					const cv::Point direction_max_left(-2.0*coverage_radius_/cost_map_.getCellSize()*sin(target_pose.yaw()), 2.0*coverage_radius_/cost_map_.getCellSize()*cos(target_pose.yaw()));
-					cv::LineIterator line_left(cost_map, target_position_pixel, target_position_pixel+direction_max_left, 8, false);
-					for (int l=0; l<line_left.count; ++l, ++line_left)
-					{
-						if (*((const double*)*line_left)<cost_map_threshold && area_map.at<uchar>(line_left.pos())==255)
-						{
-							target_position_pixel_left = line_left.pos();
-							distance_target_left = cv::norm(line_left.pos()-target_position_pixel);
-							break;
-						}
-					}
-					cv::LineIterator line_right(cost_map, target_position_pixel, target_position_pixel-direction_max_left, 8, false);
-					for (int l=0; l<line_right.count; ++l, ++line_right)
-					{
-						if (*((const double*)*line_right)<cost_map_threshold && area_map.at<uchar>(line_right.pos())==255)
-						{
-							target_position_pixel_right = line_right.pos();
-							distance_target_right = cv::norm(line_right.pos()-target_position_pixel);
-							break;
-						}
-					}
+		//const double cost_map_threshold = 0.45;	// this is an obstacle distance of inner_circle_radius + 0.1 (min_dist=0.90) + 0.5 (max_dist=0.00) //0.89;
+		const double cost_map_threshold = -1.0;	// deactivates the cost map
+		const double min_obstacle_distance = 0.1;	// in [m]
+		mira::ChannelRead<mira::maps::OccupancyGrid> merged_map = merged_map_channel_.read(/*mira::Time::now(), mira::Duration::seconds(1)*/); // enforce current data? need exception handling!
+		const double max_track_offset = merged_map->size()[0]/2 * merged_map->getCellSize() * 0.9;		// in [m]
 
-					// evaluate results
-					if (distance_target_left>1e20 && distance_target_right>1e20)
-					{
-						// abort if no accessible pixel was found
-						std::cout << "  -> No alternative target found." << std::endl;
-						continue;
-					}
-					else
-					{
-						// set new target pose
-						if (distance_target_left < distance_target_right)
-						{
-							target_pose.x() = target_position_pixel_left.x*cost_map_.getCellSize() - cost_map_.getWorldOffset()[0];
-							target_pose.y() = target_position_pixel_left.y*cost_map_.getCellSize() - cost_map_.getWorldOffset()[1];
-							std::cout << "  -> Alternative target (" << target_pose.x() << ", " << target_pose.y() << ")=(" << target_position_pixel_left.x << ", " << target_position_pixel_left.y << "),   value: " << cost_map.at<double>(target_position_pixel_left) << "    found." << std::endl;
-						}
-						else
-						{
-							target_pose.x() = target_position_pixel_right.x*cost_map_.getCellSize() - cost_map_.getWorldOffset()[0];
-							target_pose.y() = target_position_pixel_right.y*cost_map_.getCellSize() - cost_map_.getWorldOffset()[1];
-							std::cout << "  -> Alternative target (" << target_pose.x() << ", " << target_pose.y() << ")=(" << target_position_pixel_right.x << ", " << target_position_pixel_right.y << "),   value: " << cost_map.at<double>(target_position_pixel_right) << "    found." << std::endl;
-						}
-					}
+		std::cout << "merged map: " << merged_map->size() << "  "<<  merged_map->getCellSize() << " " <<  merged_map->getOffset() << std::endl;
+		mira::maps::GridMap<float> distance_transformed_map(merged_map->size(), merged_map->getCellSize(), merged_map->getOffset());
+		std::cout << "distance_transformed_map: " << distance_transformed_map.size() << std::endl;
+//			collision_test_.distanceTransform(merged_map->value(), distance_transformed_map);	// throws error
+		cv::Mat threshold_img;
+		cv::threshold(merged_map->value(), threshold_img, 140, 255, CV_THRESH_BINARY_INV);
+		cv::distanceTransform(threshold_img, distance_transformed_map, CV_DIST_L2, 5);
+		std::cout << "distanceTransform done" << std::endl;
+//			mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
+		mira::RigidTransform2f odometry_to_map = robot_->getMiraAuthority().getTransform<mira::RigidTransform2f>("/maps/MapFrame", "/robot/OdometryFrame");
+		const mira::Pose2 target_pose_in_merged_map = odometry_to_map * mira::transform_cast<mira::Pose2>(target_pose);
+		std::cout << "odometry_to_map : " << odometry_to_map << std::endl;
+		std::cout << "pose : " << target_pose_in_merged_map << std::endl;
+		mira::Point2i target_position_pixel = merged_map->world2map(target_pose_in_merged_map.t);
+		float obstacle_distance = collision_test_.distanceToObstacle(distance_transformed_map, target_position_pixel, target_pose_in_merged_map.phi()) * merged_map->getCellSize(); // in [m]
+
+		std::cout << "target_position_pixel: (" << target_position_pixel.x() << ", " << target_position_pixel.y() << "),   distance: " << obstacle_distance << std::endl;
+
+		if (obstacle_distance < min_obstacle_distance)
+		{
+			std::cout << "  -  Target (" << target_pose.x() << ", " << target_pose.y() << "),   distance: " << obstacle_distance << "    is not accessible." << std::endl;
+			// try to shift target perpendicular to driving direction,
+			// accept the closest accessible target left or right which is still located within the allowed area of path->area_map
+			const cv::Point2d direction_left(-sin(target_pose_in_merged_map.phi()), cos(target_pose_in_merged_map.phi()));
+			bool alternative_target_found = false;
+			for (double offset = merged_map->getCellSize(); offset <= max_track_offset; offset += merged_map->getCellSize())
+			{
+				// check for left point
+				mira::Pose2 pose_left_in_merged_map(target_pose_in_merged_map.x()+offset*direction_left.x, target_pose_in_merged_map.y()+offset*direction_left.y, target_pose_in_merged_map.phi());
+				mira::Point2i target_position_pixel = merged_map->world2map(pose_left_in_merged_map.t);
+				float obstacle_distance = collision_test_.distanceToObstacle(distance_transformed_map, target_position_pixel, target_pose_in_merged_map.phi()) * merged_map->getCellSize(); // in [m]
+				mira::Pose2 target_pose_candidate = odometry_to_map.inverse() * pose_left_in_merged_map;
+				cv::Point map_coordinates((target_pose_candidate.x()+map_world_offset_.x)/map_resolution_, (target_pose_candidate.y()+map_world_offset_.y)/map_resolution_);
+				if (obstacle_distance >= min_obstacle_distance && area_map.at<uchar>(map_coordinates)==255)
+				{
+					target_pose = mira::transform_cast<mira::Pose3>(target_pose_candidate);
+					alternative_target_found = true;
+					std::cout << "  -> Alternative target (" << target_pose.x() << ", " << target_pose.y() << "),   distance: " << obstacle_distance << "    found." << std::endl;
+					break;
+				}
+
+				// check for right point
+				mira::Pose2 pose_right_in_merged_map(target_pose_in_merged_map.x()-offset*direction_left.x, target_pose_in_merged_map.y()-offset*direction_left.y, target_pose_in_merged_map.phi());
+				target_position_pixel = merged_map->world2map(pose_right_in_merged_map.t);
+				obstacle_distance = collision_test_.distanceToObstacle(distance_transformed_map, target_position_pixel, target_pose_in_merged_map.phi()) * merged_map->getCellSize(); // in [m]
+				target_pose_candidate = odometry_to_map.inverse() * pose_right_in_merged_map;
+				map_coordinates = cv::Point((target_pose_candidate.x()+map_world_offset_.x)/map_resolution_, (target_pose_candidate.y()+map_world_offset_.y)/map_resolution_);
+				if (obstacle_distance >= min_obstacle_distance && area_map.at<uchar>(map_coordinates)==255)
+				{
+					target_pose = mira::transform_cast<mira::Pose3>(target_pose_candidate);
+					alternative_target_found = true;
+					std::cout << "  -> Alternative target (" << target_pose.x() << ", " << target_pose.y() << "),   distance: " << obstacle_distance << "    found." << std::endl;
+					break;
 				}
 			}
+			// abort if no accessible alternative pose was found
+			if (alternative_target_found == false)
+			{
+				std::cout << "  -> No alternative target found." << std::endl;
+				continue;
+			}
+
+//			boost::mutex::scoped_lock lock(cost_map_mutex_);
+//			if (cost_map_.getMat().empty() != true)
+//			{
+//				const cv::Mat& cost_map = cost_map_.getMat();
+//				cv::Point target_position_pixel((target_pose.x()+cost_map_.getWorldOffset()[0])/cost_map_.getCellSize(), (target_pose.y()+cost_map_.getWorldOffset()[1])/cost_map_.getCellSize());
+//				//std::cout << "target_position_pixel: (" << target_position_pixel.x << ", " << target_position_pixel.y << "),   value: " << cost_map.at<double>(target_position_pixel) << std::endl;
+//				//cv::Mat temp = cost_map.clone();
+//				//cv::circle(temp, target_position_pixel, 2, cv::Scalar(0.5), -1);
+//				//cv::imshow("cost_map", temp);
+//				//cv::waitKey(10);
+//				if (cost_map.at<double>(target_position_pixel) >= cost_map_threshold)
+//				{
+//					std::cout << "  -  Target (" << target_pose.x() << ", " << target_pose.y() << ")=(" << target_position_pixel.x << ", " << target_position_pixel.y << "),   value: " << cost_map.at<double>(target_position_pixel) << "    is not accessible." << std::endl;
+//					// try to shift target perpendicular to driving direction by at most coverage_radius distance,
+//					// accept the closest accessible target left or right which is still located within the allowed area of path->area_map
+//					cv::Point target_position_pixel_left, target_position_pixel_right;
+//					double distance_target_left = DBL_MAX, distance_target_right = DBL_MAX;
+//					const cv::Point direction_max_left(-2.0*coverage_radius_/cost_map_.getCellSize()*sin(target_pose.yaw()), 2.0*coverage_radius_/cost_map_.getCellSize()*cos(target_pose.yaw()));
+//					cv::LineIterator line_left(cost_map, target_position_pixel, target_position_pixel+direction_max_left, 8, false);
+//					for (int l=0; l<line_left.count; ++l, ++line_left)
+//					{
+//						if (*((const double*)*line_left)<cost_map_threshold && area_map.at<uchar>(line_left.pos())==255)
+//						{
+//							target_position_pixel_left = line_left.pos();
+//							distance_target_left = cv::norm(line_left.pos()-target_position_pixel);
+//							break;
+//						}
+//					}
+//					cv::LineIterator line_right(cost_map, target_position_pixel, target_position_pixel-direction_max_left, 8, false);
+//					for (int l=0; l<line_right.count; ++l, ++line_right)
+//					{
+//						if (*((const double*)*line_right)<cost_map_threshold && area_map.at<uchar>(line_right.pos())==255)
+//						{
+//							target_position_pixel_right = line_right.pos();
+//							distance_target_right = cv::norm(line_right.pos()-target_position_pixel);
+//							break;
+//						}
+//					}
+//
+//					// evaluate results
+//					if (distance_target_left>1e20 && distance_target_right>1e20)
+//					{
+//						// abort if no accessible pixel was found
+//						std::cout << "  -> No alternative target found." << std::endl;
+//						continue;
+//					}
+//					else
+//					{
+//						// set new target pose
+//						if (distance_target_left < distance_target_right)
+//						{
+//							target_pose.x() = target_position_pixel_left.x*cost_map_.getCellSize() - cost_map_.getWorldOffset()[0];
+//							target_pose.y() = target_position_pixel_left.y*cost_map_.getCellSize() - cost_map_.getWorldOffset()[1];
+//							std::cout << "  -> Alternative target (" << target_pose.x() << ", " << target_pose.y() << ")=(" << target_position_pixel_left.x << ", " << target_position_pixel_left.y << "),   value: " << cost_map.at<double>(target_position_pixel_left) << "    found." << std::endl;
+//						}
+//						else
+//						{
+//							target_pose.x() = target_position_pixel_right.x*cost_map_.getCellSize() - cost_map_.getWorldOffset()[0];
+//							target_pose.y() = target_position_pixel_right.y*cost_map_.getCellSize() - cost_map_.getWorldOffset()[1];
+//							std::cout << "  -> Alternative target (" << target_pose.x() << ", " << target_pose.y() << ")=(" << target_position_pixel_right.x << ", " << target_position_pixel_right.y << "),   value: " << cost_map.at<double>(target_position_pixel_right) << "    found." << std::endl;
+//						}
+//					}
+//				}
+//			}
 		}
 		// publish commanded next target
 		publishCommandedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(target_pose.r.x(), target_pose.r.y(), target_pose.r.z(), target_pose.r.w()), tf::Vector3(target_pose.x(), target_pose.y(), target_pose.z())), ros::Time::now(), map_frame_, robot_frame_));
@@ -539,12 +618,23 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		double robot_speed_theta = 0.;	// [rad/s]
 		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
 
-		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
-		const double max_speed = 0.5;
-		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;	// only takes effect if the robot ever reaches the goal exactly
+		// todo: decrease max_speed_x in curves
+//		double last_yaw = target_pose.yaw();
+//		double angle_sum = 0.;
+//		for (size_t j=i+1; j<std::min(path->target_poses.size(), path->target_poses.size()+5); ++j)
+//		{
+//			mira::Pose3 pose(Eigen::Vector3f(path->target_poses[j].pose.position.x, path->target_poses[j].pose.position.y, path->target_poses[j].pose.position.z),
+//					Eigen::Quaternionf(path->target_poses[j].pose.orientation.w, path->target_poses[j].pose.orientation.x, path->target_poses[j].pose.orientation.y, path->target_poses[j].pose.orientation.z));
+//			//angles::shortest_angular_distance
+//		}
+
 		const double max_speed_x = 0.6;	// in [m/s]
 		const double max_speed_phi = mira::deg2rad(60.f);	// in [rad/s]
 
+		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
+		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed_x-fabs(robot_speed_x))/max_speed_x;	// only takes effect if the robot ever reaches the goal exactly instead of being commanded to the next goal already
+
+		// todo: if there is a big distance between two successive goal positions, decrease the goal tolerance
 		goal_position_tolerance = 0.4 + 2.*robot_speed_x * desired_planning_ahead_time;
 
 		// command new navigation goal

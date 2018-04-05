@@ -32,6 +32,7 @@
 #include <nav_msgs/OccupancyGrid.h>
 #include <nav_msgs/Odometry.h>
 
+#include <model/CollisionTest.h>
 
 //includes for move_base
 #ifdef __WITH_PILOT__
@@ -104,6 +105,11 @@ private:
 	double robot_radius_;		// the radius of the inner circle of the bounding box of the robot footprint, in [m]
 	double coverage_radius_;		// the radius of the area of the coverage device (cleaner, camera, ...), in [m]
 	mira::RigidTransform3d coverage_offset_;		// the center offset of the area of the coverage device (cleaner, camera, ...) against robot_frame_, in [m]
+	cv::Point2d map_world_offset_;	// in [m]
+	double map_resolution_;		// in [m/cell]
+	mira::Channel<mira::maps::OccupancyGrid> merged_map_channel_;
+	mira::Footprint footprint_;
+	mira::model::CollisionTest collision_test_;
 #endif
 
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
