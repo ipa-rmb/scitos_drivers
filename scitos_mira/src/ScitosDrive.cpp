@@ -342,6 +342,11 @@ void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr&
 	mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
 	r.wait();
 
+	// wait until arrived at target
+	mira::Pose3 target_pose(Eigen::Vector3f(goal->target_pose.pose.position.x, goal->target_pose.pose.position.y, goal->target_pose.pose.position.z),
+					Eigen::Quaternionf(goal->target_pose.pose.orientation.w, goal->target_pose.pose.orientation.x, goal->target_pose.pose.orientation.y, goal->target_pose.pose.orientation.z));
+	waitForTargetApproach(target_pose, 0.25, 3.14, 0.);
+
 	// this sends the response back to the caller
 	MoveBaseActionServer::Result res;
 	move_base_action_server_->setSucceeded(res);
@@ -427,8 +432,9 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 }
 
 
-void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold)
+int ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold)
 {
+	int return_code = 0;	// 0=goal reached, 1=target inaccessible, 2=pilot not in PlanAndDrive mode, 3=robot does not move
 //	cv::Point target_position_pixel(-1,-1);
 //	if (cost_map_threshold >= 0)
 //	{
@@ -475,9 +481,19 @@ void ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const fl
 		if (target_inaccessible==true || nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
 				(distance_to_goal<goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
 				(robot_freeze_time > robot_freeze_timeout))
+		{
+			if (target_inaccessible==true)
+				return_code = 1;
+			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0)
+				return_code = 2;
+			if (robot_freeze_time > robot_freeze_timeout)
+				return_code = 3;
 			break;
+		}
 		ros::spinOnce();
 	}
+
+	return return_code;
 }
 
 void ScitosDrive::publishComputedTarget(const tf::StampedTransform& transform)
@@ -507,7 +523,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	 */
 	ROS_INFO("ScitosDrive::path_callback: Following a path.");
 
-	const double desired_planning_ahead_time = 0.;	// used for computing goal_position_tolerance, in [s]
+	const double desired_planning_ahead_time = 0.4;	// used for computing goal_position_tolerance, in [s]
 
 	//const float path_tolerance = (path->path_tolerance>0.f ? path->path_tolerance : 0.1f);
 	float goal_position_tolerance = (path->goal_position_tolerance>0.f ? path->goal_position_tolerance : 0.1f);
@@ -527,7 +543,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		// convert target pose to mira::Pose3
 		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
 				Eigen::Quaternionf(path->target_poses[i].pose.orientation.w, path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z));
-		std::cout << "  Next pose: " << target_pose.x() << ", " << target_pose.y() << ", " << target_pose.yaw() << std::endl;
+		std::cout << "------------------------------------------------------------------------------------------------------------------\n  Next pose: " << target_pose.x() << ", " << target_pose.y() << ", " << target_pose.yaw() << std::endl;
 
 		// publish computed next target
 		publishComputedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_));
@@ -537,13 +553,13 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		mira::maps::OccupancyGrid merged_map;
 		mira::maps::GridMap<float> distance_transformed_map;
 		boost::shared_ptr<mira::RigidTransform2f> odometry_to_map;
-		float obstacle_distance = computeFootprintToObstacleDistance(mira::transform_cast<mira::Pose2>(target_pose), target_pose_in_merged_map, merged_map, distance_transformed_map, odometry_to_map, true);
+		float obstacle_distance = computeFootprintToObstacleDistance(mira::transform_cast<mira::Pose2>(target_pose), target_pose_in_merged_map, merged_map, distance_transformed_map, odometry_to_map);
 
 		// check whether the next target pose is accessible (i.e. cost_map < 0.89) and shift occluded targets into accessible space
 		// now uses the exact footprint for collision checking
 		//const double cost_map_threshold = 0.45;	// this is an obstacle distance of inner_circle_radius + 0.1 (min_dist=0.90) + 0.5 (max_dist=0.00) //0.89;
 		const double cost_map_threshold = -1.0;	// deactivates the cost map
-		const double min_obstacle_distance = 0.1;	// in [m]
+		const double min_obstacle_distance = 0.02;	// in [m]
 //		mira::ChannelRead<mira::maps::OccupancyGrid> merged_map = merged_map_channel_.read(/*mira::Time::now(), mira::Duration::seconds(1)*/); // enforce current data? need exception handling!
 		const double max_track_offset = merged_map.size()[0]/2 * merged_map.getCellSize() * 0.9;		// in [m]
 
@@ -699,7 +715,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed_x-fabs(robot_speed_x))/max_speed_x;	// only takes effect if the robot ever reaches the goal exactly instead of being commanded to the next goal already
 
 		// todo: if there is a big distance between two successive goal positions, decrease the goal tolerance
-		goal_position_tolerance = 0.4 + 2.*robot_speed_x * desired_planning_ahead_time;
+		goal_position_tolerance = 0.4 + robot_speed_x * desired_planning_ahead_time;
 
 		// command new navigation goal
 		mira::navigation::TaskPtr task(new mira::navigation::Task());
@@ -709,15 +725,27 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target_pose.yaw(), 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::VelocityTask(mira::Velocity2(max_speed_x, 0.0, max_speed_phi))));	// limit the max allowed speed
 		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 1.f/*0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 1.f/*0.9f *//*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
 
 		// Set this as our goal. Will cause the robot to start driving.
 		mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
+		// could do something else here
 		r.wait();
 		std::cout << " --- " << (mira::Time::now()-start_time).totalMilliseconds()<< "ms" << std::endl;
 
 		// wait until close to target
-		waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance, cost_map_threshold);
+		const int return_code = waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance, cost_map_threshold);
+		std::cout << "   returned from waitForTargetApproach with return code: " << return_code << std::endl;
+
+		// on robot_freeze try move command again with driving backwards allowed
+		if (return_code==3)
+		{
+			std::cout << "############################ Cannot drive to goal, trying with driving backwards allowed now." << std::endl;
+			task->getSubTask<mira::navigation::PreferredDirectionTask>()->direction = mira::navigation::PreferredDirectionTask::BOTH;
+			//task->getSubTask<mira::navigation::PreferredDirectionTask>()->wrongDirectionCost = 0.5f;
+			robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task).get();
+			waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance, cost_map_threshold); // wait until close to target
+		}
 	}
 
 	std::cout << "  Path following successfully terminated." << std::endl;
