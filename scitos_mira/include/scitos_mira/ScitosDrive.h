@@ -51,7 +51,7 @@
 #endif
 
 #include <boost/thread/mutex.hpp>
-
+#include <boost/make_shared.hpp>
 
 typedef actionlib::SimpleActionServer<move_base_msgs::MoveBaseAction> MoveBaseActionServer;
 typedef actionlib::SimpleActionServer<scitos_msgs::MoveBasePathAction> PathActionServer;
@@ -93,6 +93,9 @@ private:
 	void publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
+	float computeFootprintToObstacleDistance(const mira::Pose2& target_pose);
+	float computeFootprintToObstacleDistance(const mira::Pose2& target_pose, mira::Pose2& target_pose_in_merged_map, mira::maps::OccupancyGrid& merged_map,
+			mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map, bool debug_texts=false);
 	void waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold=-1);
 	void publishComputedTarget(const tf::StampedTransform& transform);
 	void publishCommandedTarget(const tf::StampedTransform& transform);
