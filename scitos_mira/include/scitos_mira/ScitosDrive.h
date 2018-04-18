@@ -29,6 +29,7 @@
 #include <actionlib/server/simple_action_server.h>
 #include <move_base_msgs/MoveBaseAction.h>
 #include <scitos_msgs/MoveBasePathAction.h>
+#include <scitos_msgs/MoveBaseWallFollowAction.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <nav_msgs/Odometry.h>
 
@@ -56,6 +57,7 @@
 
 typedef actionlib::SimpleActionServer<move_base_msgs::MoveBaseAction> MoveBaseActionServer;
 typedef actionlib::SimpleActionServer<scitos_msgs::MoveBasePathAction> PathActionServer;
+typedef actionlib::SimpleActionServer<scitos_msgs::MoveBaseWallFollowAction> WallFollowActionServer;
 
 class ScitosDrive: public ScitosModule {
 public:
@@ -122,8 +124,10 @@ private:
 	boost::shared_ptr<PathActionServer> path_action_server_; ///< Action server which accepts requests for a path to follow
 	void path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
 
-	boost::shared_ptr<PathActionServer> wall_follow_action_server_; ///< Action server which accepts requests for wall following
-	void wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
+	//boost::shared_ptr<PathActionServer> wall_follow_action_server_; ///< Action server which accepts requests for wall following
+	//void wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
+	boost::shared_ptr<WallFollowActionServer> wall_follow_action_server_; ///< Action server which accepts requests for wall following
+	void wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoalConstPtr& path);
 
 	double normalize_angle(double delta_angle);
 

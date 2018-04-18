@@ -6,6 +6,7 @@ project(scitos_mira)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp std_msgs sensor_msgs tf nav_msgs scitos_msgs dynamic_reconfigure move_base_msgs actionlib actionlib_msgs cv_bridge eigen_conversions)
 
+find_package(OpenCV REQUIRED)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system thread)
@@ -75,6 +76,7 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(include
+  ${OpenCV_INCLUDE_DIRS}
   ${catkin_INCLUDE_DIRS}
 )
 
@@ -107,7 +109,7 @@ if(${PACKAGE_Pilot_FOUND})
 	set_target_properties(scitos_node PROPERTIES COMPILE_DEFINITIONS "__WITH_PILOT__")
 endif(${PACKAGE_Pilot_FOUND})
 
-target_link_libraries(scitos_node ${catkin_LIBRARIES})
+target_link_libraries(scitos_node ${OpenCV_LIBRARIES} ${catkin_LIBRARIES})
 
 
 ## Add cmake target dependencies of the executable/library

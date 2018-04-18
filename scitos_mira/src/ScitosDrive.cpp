@@ -81,7 +81,8 @@ void ScitosDrive::initialize() {
   path_action_server_ = boost::shared_ptr<PathActionServer>(new PathActionServer(robot_->getRosNode(), "/move_base_path", boost::bind(&ScitosDrive::path_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
   path_action_server_->start();
 
-  wall_follow_action_server_ = boost::shared_ptr<PathActionServer>(new PathActionServer(robot_->getRosNode(), "/move_base_wall_follow", boost::bind(&ScitosDrive::wall_follow_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
+  //wall_follow_action_server_ = boost::shared_ptr<PathActionServer>(new PathActionServer(robot_->getRosNode(), "/move_base_wall_follow", boost::bind(&ScitosDrive::wall_follow_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
+  wall_follow_action_server_ = boost::shared_ptr<WallFollowActionServer>(new WallFollowActionServer(robot_->getRosNode(), "/move_base_wall_follow", boost::bind(&ScitosDrive::wall_follow_callback, this, _1), false)); // this initializes the action server; important: always set the last parameter to false
   wall_follow_action_server_->start();
 
   reset_motor_stop_service_ = robot_->getRosNode().advertiseService("/reset_motorstop", &ScitosDrive::reset_motor_stop, this);
@@ -882,297 +883,318 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 
 
 // Wall following function
-void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path)
+void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoalConstPtr& goal)
 {
 #ifdef __WITH_PILOT__
 	ROS_INFO("ScitosDrive::wall_follow_callback: Driving along a wall.");
 
-	// access the cost map for finding the points with a fixed distance to walls
-	cv::Mat cost_map;
-	cv::Point2d cost_map_offset(0.,0.);	// [m]
-	double cost_map_resolution = 0.;	// [m/cell]
-	{
-		boost::mutex::scoped_lock lock(cost_map_mutex_);
-		if (cost_map_.getMat().empty() == false)
-		{
-			cost_map = cost_map_.getMat().clone();
-			cost_map_offset = cv::Point2d(-cost_map_.getWorldOffset()[0], -cost_map_.getWorldOffset()[1]);
-			cost_map_resolution = cost_map_.getCellSize();
-		}
-	}
-
-	if (cost_map.empty() == true)
-	{
-		ROS_ERROR("ScitosDrive::wall_follow_callback: Could not read the cost map.");
-
-		// this sends the response back to the caller
-		PathActionServer::Result res;
-		wall_follow_action_server_->setAborted(res);
-		return;
-	}
-
 	// convert the area_map msg in cv format
 	cv_bridge::CvImagePtr cv_ptr_obj;
-	cv_ptr_obj = cv_bridge::toCvCopy(path->area_map, sensor_msgs::image_encodings::MONO8);
+	cv_ptr_obj = cv_bridge::toCvCopy(goal->area_map, sensor_msgs::image_encodings::MONO8);
 	const cv::Mat area_map = cv_ptr_obj->image;
-	if (area_map.cols!=cost_map.cols || area_map.rows!=cost_map.rows)
-	{
-		ROS_ERROR("ScitosDrive::wall_follow_callback: The cost map and the provided area map are different in size.");
-
-		// this sends the response back to the caller
-		PathActionServer::Result res;
-		wall_follow_action_server_->setAborted(res);
-		return;
-	}
-
-
-//	// todo: get with message
-//	const int u_min = std::max(0, (int)((-2.-cost_map_offset.x)/cost_map_resolution));
-//	const int u_max = std::min(cost_map.cols, (int)((6.3-cost_map_offset.x)/cost_map_resolution));
-//	const int v_min = std::max(0, (int)((-4.6-cost_map_offset.y)/cost_map_resolution));
-//	const int v_max = std::min(cost_map.rows, (int)((2.8-cost_map_offset.y)/cost_map_resolution));
-	std::cout << "cost_map_offset.x=" << cost_map_offset.x << "    cost_map_offset.y=" << cost_map_offset.y << std::endl;
-//	std::cout << "u=" << u_min << "," << u_max << "    v=" << v_min << "," << v_max << std::endl;
-
-	// find the points near walls in the accessible area of the room
-	cv::Mat level_set_map = cv::Mat::zeros(cost_map.rows, cost_map.cols, CV_8UC1);
-	for (int v=0; v<cost_map.rows; ++v)
-	{
-		for (int u=0; u<cost_map.cols; ++u)
-		{
-			if (area_map.at<uchar>(v,u)==255 && cost_map.at<double>(v,u) < 1.)
-			{
-				for (int dv=-1; dv<=1; ++dv)
-				{
-					for (int du=-1; du<=1; ++du)
-					{
-						const int nu = u+du;
-						const int nv = v+dv;
-						if (nu<0 || nu>=cost_map.cols || nv<0 || nv>cost_map.rows)
-							continue;
-						if (cost_map.at<double>(nv,nu) >= 1.)
-							level_set_map.at<uchar>(v,u) = 255;
-					}
-				}
-			}
-		}
-	}
-//	cv::Mat temp = cost_map.clone();
-//	for (int v=0; v<cost_map.rows; ++v)
-//		for (int u=0; u<cost_map.cols; ++u)
-//			if (level_set_map.at<uchar>(v,u) == 255)
-//				temp.at<double>(v,u) = 0.;
-//	cv::imshow("cost_map", temp);
-//	cv::waitKey(10);
-
-	// determine a preferred driving direction for each point
-	const double pi = 3.14159265359;
-	const double direction_offset = 0.5*pi;		// the direction offset is +pi/2 for wall following on the right side and -pi/2 for wall following on the left side
-	cv::Mat cost_map_dx, cost_map_dy;
-	cv::Sobel(cost_map, cost_map_dx, CV_64F, 1, 0, 3);
-	cv::Sobel(cost_map, cost_map_dy, CV_64F, 0, 1, 3);
-	cv::Mat driving_direction(cost_map.rows, cost_map.cols, CV_32FC1);
-	for (int v=0; v<level_set_map.rows; ++v)
-		for (int u=0; u<level_set_map.cols; ++u)
-			if (level_set_map.at<uchar>(v,u) == 255)
-				driving_direction.at<float>(v,u) = atan2(cost_map_dy.at<double>(v,u), cost_map_dx.at<double>(v,u)) + direction_offset;
-
-	// find the closest position to the robot pose
-	mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
-	cv::Point current_pos(0,0);
-	double min_dist_sqr = 1e10;
-	for (int v=0; v<level_set_map.rows; ++v)
-	{
-		for (int u=0; u<level_set_map.cols; ++u)
-		{
-			if (level_set_map.at<uchar>(v,u) == 255)
-			{
-				cv::Point2d pos(u*cost_map_resolution+cost_map_offset.x, v*cost_map_resolution+cost_map_offset.y);
-				const double dist_sqr = (pos.x-robot_pose.x())*(pos.x-robot_pose.x()) + (pos.y-robot_pose.y())*(pos.y-robot_pose.y());
-				if (dist_sqr < min_dist_sqr)
-				{
-					min_dist_sqr = dist_sqr;
-					current_pos = cv::Point(u,v);
-				}
-			}
-		}
-	}
-
-	// collect the wall following path
-	std::vector<cv::Vec3d> wall_poses;
-	wall_poses.push_back(cv::Vec3d(current_pos.x*cost_map_resolution+cost_map_offset.x, current_pos.y*cost_map_resolution+cost_map_offset.y, driving_direction.at<float>(current_pos)));
-	level_set_map.at<uchar>(current_pos) = 0;
-	while (true)
-	{
-		cv::Point next_pos(-1,-1);
-		// try to find a suitable point in the neighborhood
-		double max_cos_angle = -1e10;
-		const double dd_x = cos(driving_direction.at<float>(current_pos));
-		const double dd_y = sin(driving_direction.at<float>(current_pos));
-		for (int dv=-1; dv<=1; ++dv)
-		{
-			for (int du=-1; du<=1; ++du)
-			{
-				const int nu = current_pos.x+du;
-				const int nv = current_pos.y+dv;
-				if (nu<0 || nu>=cost_map.cols || nv<0 || nv>cost_map.rows || level_set_map.at<uchar>(nv,nu)!=255)	// the last condition implicitly excludes the center pixel
-					continue;
-
-				// determine the angle difference
-				double cos_angle = dd_x*du + dd_y*dv;
-				if (cos_angle > max_cos_angle)
-				{
-					max_cos_angle = cos_angle;
-					next_pos = cv::Point(nu, nv);
-				}
-			}
-		}
-
-		// if no suitable point was found in the neighborhood search the whole map for the closest next point
-		if (next_pos.x < 0)
-		{
-			double min_dist_sqr = 1e10;
-			for (int v=0; v<level_set_map.rows; ++v)
-			{
-				for (int u=0; u<level_set_map.cols; ++u)
-				{
-					if (level_set_map.at<uchar>(v,u) == 255)
-					{
-						const double dist_sqr = (current_pos.x-u)*(current_pos.x-u) + (current_pos.y-v)*(current_pos.y-v);
-						if (dist_sqr < min_dist_sqr)
-						{
-							min_dist_sqr = dist_sqr;
-							next_pos = cv::Point(u,v);
-						}
-					}
-				}
-			}
-		}
-
-		// if still no other point can be found we are done
-		if (next_pos.x < 0)
-			break;
-
-		// prepare next step
-		level_set_map.at<uchar>(next_pos) = 0;
-		current_pos = next_pos;
-		wall_poses.push_back(cv::Vec3d(current_pos.x*cost_map_resolution+cost_map_offset.x, current_pos.y*cost_map_resolution+cost_map_offset.y, driving_direction.at<float>(current_pos)));
-	}
-
-//	// display path
-//	std::cout << "printing path" << std::endl;
-//	for(size_t step=1; step<wall_poses.size(); ++step)
-//	{
-//		cv::Mat fov_path_map = cost_map.clone();
-//		cv::resize(fov_path_map, fov_path_map, cv::Size(), 2, 2, cv::INTER_LINEAR);
-//		if (wall_poses.size() > 0)
-//			cv::circle(fov_path_map, 2*cv::Point((wall_poses[0].val[0]-cost_map_offset.x)/cost_map_resolution, (wall_poses[0].val[1]-cost_map_offset.y)/cost_map_resolution), 2, cv::Scalar(0.6), CV_FILLED);
-//		for(size_t i=1; i<=step; ++i)
-//		{
-//			cv::Point p1((wall_poses[i-1].val[0]-cost_map_offset.x)/cost_map_resolution, (wall_poses[i-1].val[1]-cost_map_offset.y)/cost_map_resolution);
-//			cv::Point p2((wall_poses[i].val[0]-cost_map_offset.x)/cost_map_resolution, (wall_poses[i].val[1]-cost_map_offset.y)/cost_map_resolution);
-//			cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.8), CV_FILLED);
-//			cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
-//			cv::Point p3(p2.x+5*cos(wall_poses[i].val[2]), p2.y+5*sin(wall_poses[i].val[2]));
-//			if (i==step)
-//			{
-//				cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.3), CV_FILLED);
-//				cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
-//				cv::line(fov_path_map, 2*p2, 2*p3, cv::Scalar(0.2), 1);
-//			}
-//		}
-//		cv::imshow("cell path", fov_path_map);
-//		cv::waitKey();
-//	}
-
-	// move through the wall poses
-	const float path_tolerance = (path->path_tolerance>0.f ? path->path_tolerance : 0.1f);
-	const float goal_position_tolerance = (path->goal_position_tolerance>0.f ? path->goal_position_tolerance : 0.1f);
-	const float goal_angle_tolerance = (path->goal_angle_tolerance>0.f ? path->goal_angle_tolerance : 0.17f);
-	for (std::vector<cv::Vec3d>::iterator pose = wall_poses.begin(); pose!=wall_poses.end(); ++pose)
-	{
-		std::cout << "  Next pose: " << pose->val[0] << ", " << pose->val[1] << ", " << pose->val[2] << std::endl;
-
-		// todo: mark as visited and do not approach a pose in the vicinity again in future
-		// todo: use without wall task on longer distances
-
-		// publish computed next target
-		//publishComputedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_));
-
-
-		// get current robot speed
-		double robot_speed_x = 0.; // [m/s]
-		double robot_speed_theta = 0.;	// [rad/s]
-		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
-
-		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
-		const double max_speed = 0.5;
-		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
-
-		// command new navigation goal
-		mira::navigation::TaskPtr task(new mira::navigation::Task());
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(pose->val[0], pose->val[1]),
-				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/maps/MapFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(true, true)));
-//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(pose->val[0], pose->val[1]),
-//				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
-		// todo: (last point true optional)
-		//task->addSubTask(mira::navigation::SubTaskPtr(
-		//	new mira::navigation::SmoothTransitionTask(/*smoothTransition=*/true,
-		//	                                           /*allowTransit=*/true)));
-		// todo: (last point allowTransit=false)
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(pose->val[2], 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
-		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::WallDistanceTask(0.4, 0.5, mira::navigation::WallDistanceTask::KEEP_RIGHT)));
-
-		// Set this as our goal. Will cause the robot to start driving.
-		mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
-		r.wait();
-
-		// wait until close to target
-		mira::Pose3 target_pose(pose->val[0], pose->val[1], 0., pose->val[2], 0., 0.);
-		waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance);
-//		const double robot_freeze_timeout = 4.;	// [s]
-//		ros::Time last_robot_movement = ros::Time::now();
-//		while (true)
-//		{
-//			mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
-//			double distance_to_goal = (pose->val[0]-robot_pose.x())*(pose->val[0]-robot_pose.x()) + (pose->val[1]-robot_pose.y())*(pose->val[1]-robot_pose.y());
-//			double delta_angle = normalize_angle(pose->val[2]-robot_pose.yaw());
-//			//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
-//			// also abort if the robot does not move for a long time
-//			{
-//				boost::mutex::scoped_lock lock(odom_msg_mutex_);
-//				robot_speed_x = odom_msg_.twist.twist.linear.x;
-//				robot_speed_theta = odom_msg_.twist.twist.angular.z;
-//			}
-//			if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
-//				last_robot_movement = ros::Time::now();
-//			double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
-//			//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
-//			boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
-//			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
-//					(distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
-//					(robot_freeze_time > robot_freeze_timeout))
-//				break;
-//			ros::spinOnce();
-//		}
-	}
-
-	std::cout << "  Wall following successfully terminated." << std::endl;
-
-	// this sends the response back to the caller
-	PathActionServer::Result res;
-	wall_follow_action_server_->setSucceeded(res);
+	cv::imshow("area_map", area_map);
+	cv::waitKey();
 #else
 	ROS_ERROR("ScitosDrive::wall_follow_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
 
 	// this sends the response back to the caller
-	PathActionServer::Result res;
+	WallFollowActionServer::Result res;
 	wall_follow_action_server_->setAborted(res);
 #endif
 }
+
+// Old wall following function
+//void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseGoalConstPtr& path)
+//{
+//#ifdef __WITH_PILOT__
+//	ROS_INFO("ScitosDrive::wall_follow_callback: Driving along a wall.");
+//
+//	// access the cost map for finding the points with a fixed distance to walls
+//	cv::Mat cost_map;
+//	cv::Point2d cost_map_offset(0.,0.);	// [m]
+//	double cost_map_resolution = 0.;	// [m/cell]
+//	{
+//		boost::mutex::scoped_lock lock(cost_map_mutex_);
+//		if (cost_map_.getMat().empty() == false)
+//		{
+//			cost_map = cost_map_.getMat().clone();
+//			cost_map_offset = cv::Point2d(-cost_map_.getWorldOffset()[0], -cost_map_.getWorldOffset()[1]);
+//			cost_map_resolution = cost_map_.getCellSize();
+//		}
+//	}
+//
+//	if (cost_map.empty() == true)
+//	{
+//		ROS_ERROR("ScitosDrive::wall_follow_callback: Could not read the cost map.");
+//
+//		// this sends the response back to the caller
+//		PathActionServer::Result res;
+//		wall_follow_action_server_->setAborted(res);
+//		return;
+//	}
+//
+//	// convert the area_map msg in cv format
+//	cv_bridge::CvImagePtr cv_ptr_obj;
+//	cv_ptr_obj = cv_bridge::toCvCopy(path->area_map, sensor_msgs::image_encodings::MONO8);
+//	const cv::Mat area_map = cv_ptr_obj->image;
+//	if (area_map.cols!=cost_map.cols || area_map.rows!=cost_map.rows)
+//	{
+//		ROS_ERROR("ScitosDrive::wall_follow_callback: The cost map and the provided area map are different in size.");
+//
+//		// this sends the response back to the caller
+//		PathActionServer::Result res;
+//		wall_follow_action_server_->setAborted(res);
+//		return;
+//	}
+//
+//
+////	// todo: get with message
+////	const int u_min = std::max(0, (int)((-2.-cost_map_offset.x)/cost_map_resolution));
+////	const int u_max = std::min(cost_map.cols, (int)((6.3-cost_map_offset.x)/cost_map_resolution));
+////	const int v_min = std::max(0, (int)((-4.6-cost_map_offset.y)/cost_map_resolution));
+////	const int v_max = std::min(cost_map.rows, (int)((2.8-cost_map_offset.y)/cost_map_resolution));
+//	std::cout << "cost_map_offset.x=" << cost_map_offset.x << "    cost_map_offset.y=" << cost_map_offset.y << std::endl;
+////	std::cout << "u=" << u_min << "," << u_max << "    v=" << v_min << "," << v_max << std::endl;
+//
+//	// find the points near walls in the accessible area of the room
+//	cv::Mat level_set_map = cv::Mat::zeros(cost_map.rows, cost_map.cols, CV_8UC1);
+//	for (int v=0; v<cost_map.rows; ++v)
+//	{
+//		for (int u=0; u<cost_map.cols; ++u)
+//		{
+//			if (area_map.at<uchar>(v,u)==255 && cost_map.at<double>(v,u) < 1.)
+//			{
+//				for (int dv=-1; dv<=1; ++dv)
+//				{
+//					for (int du=-1; du<=1; ++du)
+//					{
+//						const int nu = u+du;
+//						const int nv = v+dv;
+//						if (nu<0 || nu>=cost_map.cols || nv<0 || nv>cost_map.rows)
+//							continue;
+//						if (cost_map.at<double>(nv,nu) >= 1.)
+//							level_set_map.at<uchar>(v,u) = 255;
+//					}
+//				}
+//			}
+//		}
+//	}
+////	cv::Mat temp = cost_map.clone();
+////	for (int v=0; v<cost_map.rows; ++v)
+////		for (int u=0; u<cost_map.cols; ++u)
+////			if (level_set_map.at<uchar>(v,u) == 255)
+////				temp.at<double>(v,u) = 0.;
+////	cv::imshow("cost_map", temp);
+////	cv::waitKey(10);
+//
+//	// determine a preferred driving direction for each point
+//	const double pi = 3.14159265359;
+//	const double direction_offset = 0.5*pi;		// the direction offset is +pi/2 for wall following on the right side and -pi/2 for wall following on the left side
+//	cv::Mat cost_map_dx, cost_map_dy;
+//	cv::Sobel(cost_map, cost_map_dx, CV_64F, 1, 0, 3);
+//	cv::Sobel(cost_map, cost_map_dy, CV_64F, 0, 1, 3);
+//	cv::Mat driving_direction(cost_map.rows, cost_map.cols, CV_32FC1);
+//	for (int v=0; v<level_set_map.rows; ++v)
+//		for (int u=0; u<level_set_map.cols; ++u)
+//			if (level_set_map.at<uchar>(v,u) == 255)
+//				driving_direction.at<float>(v,u) = atan2(cost_map_dy.at<double>(v,u), cost_map_dx.at<double>(v,u)) + direction_offset;
+//
+//	// find the closest position to the robot pose
+//	mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+//	cv::Point current_pos(0,0);
+//	double min_dist_sqr = 1e10;
+//	for (int v=0; v<level_set_map.rows; ++v)
+//	{
+//		for (int u=0; u<level_set_map.cols; ++u)
+//		{
+//			if (level_set_map.at<uchar>(v,u) == 255)
+//			{
+//				cv::Point2d pos(u*cost_map_resolution+cost_map_offset.x, v*cost_map_resolution+cost_map_offset.y);
+//				const double dist_sqr = (pos.x-robot_pose.x())*(pos.x-robot_pose.x()) + (pos.y-robot_pose.y())*(pos.y-robot_pose.y());
+//				if (dist_sqr < min_dist_sqr)
+//				{
+//					min_dist_sqr = dist_sqr;
+//					current_pos = cv::Point(u,v);
+//				}
+//			}
+//		}
+//	}
+//
+//	// collect the wall following path
+//	std::vector<cv::Vec3d> wall_poses;
+//	wall_poses.push_back(cv::Vec3d(current_pos.x*cost_map_resolution+cost_map_offset.x, current_pos.y*cost_map_resolution+cost_map_offset.y, driving_direction.at<float>(current_pos)));
+//	level_set_map.at<uchar>(current_pos) = 0;
+//	while (true)
+//	{
+//		cv::Point next_pos(-1,-1);
+//		// try to find a suitable point in the neighborhood
+//		double max_cos_angle = -1e10;
+//		const double dd_x = cos(driving_direction.at<float>(current_pos));
+//		const double dd_y = sin(driving_direction.at<float>(current_pos));
+//		for (int dv=-1; dv<=1; ++dv)
+//		{
+//			for (int du=-1; du<=1; ++du)
+//			{
+//				const int nu = current_pos.x+du;
+//				const int nv = current_pos.y+dv;
+//				if (nu<0 || nu>=cost_map.cols || nv<0 || nv>cost_map.rows || level_set_map.at<uchar>(nv,nu)!=255)	// the last condition implicitly excludes the center pixel
+//					continue;
+//
+//				// determine the angle difference
+//				double cos_angle = dd_x*du + dd_y*dv;
+//				if (cos_angle > max_cos_angle)
+//				{
+//					max_cos_angle = cos_angle;
+//					next_pos = cv::Point(nu, nv);
+//				}
+//			}
+//		}
+//
+//		// if no suitable point was found in the neighborhood search the whole map for the closest next point
+//		if (next_pos.x < 0)
+//		{
+//			double min_dist_sqr = 1e10;
+//			for (int v=0; v<level_set_map.rows; ++v)
+//			{
+//				for (int u=0; u<level_set_map.cols; ++u)
+//				{
+//					if (level_set_map.at<uchar>(v,u) == 255)
+//					{
+//						const double dist_sqr = (current_pos.x-u)*(current_pos.x-u) + (current_pos.y-v)*(current_pos.y-v);
+//						if (dist_sqr < min_dist_sqr)
+//						{
+//							min_dist_sqr = dist_sqr;
+//							next_pos = cv::Point(u,v);
+//						}
+//					}
+//				}
+//			}
+//		}
+//
+//		// if still no other point can be found we are done
+//		if (next_pos.x < 0)
+//			break;
+//
+//		// prepare next step
+//		level_set_map.at<uchar>(next_pos) = 0;
+//		current_pos = next_pos;
+//		wall_poses.push_back(cv::Vec3d(current_pos.x*cost_map_resolution+cost_map_offset.x, current_pos.y*cost_map_resolution+cost_map_offset.y, driving_direction.at<float>(current_pos)));
+//	}
+//
+////	// display path
+////	std::cout << "printing path" << std::endl;
+////	for(size_t step=1; step<wall_poses.size(); ++step)
+////	{
+////		cv::Mat fov_path_map = cost_map.clone();
+////		cv::resize(fov_path_map, fov_path_map, cv::Size(), 2, 2, cv::INTER_LINEAR);
+////		if (wall_poses.size() > 0)
+////			cv::circle(fov_path_map, 2*cv::Point((wall_poses[0].val[0]-cost_map_offset.x)/cost_map_resolution, (wall_poses[0].val[1]-cost_map_offset.y)/cost_map_resolution), 2, cv::Scalar(0.6), CV_FILLED);
+////		for(size_t i=1; i<=step; ++i)
+////		{
+////			cv::Point p1((wall_poses[i-1].val[0]-cost_map_offset.x)/cost_map_resolution, (wall_poses[i-1].val[1]-cost_map_offset.y)/cost_map_resolution);
+////			cv::Point p2((wall_poses[i].val[0]-cost_map_offset.x)/cost_map_resolution, (wall_poses[i].val[1]-cost_map_offset.y)/cost_map_resolution);
+////			cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.8), CV_FILLED);
+////			cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
+////			cv::Point p3(p2.x+5*cos(wall_poses[i].val[2]), p2.y+5*sin(wall_poses[i].val[2]));
+////			if (i==step)
+////			{
+////				cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.3), CV_FILLED);
+////				cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
+////				cv::line(fov_path_map, 2*p2, 2*p3, cv::Scalar(0.2), 1);
+////			}
+////		}
+////		cv::imshow("cell path", fov_path_map);
+////		cv::waitKey();
+////	}
+//
+//	// move through the wall poses
+//	const float path_tolerance = (path->path_tolerance>0.f ? path->path_tolerance : 0.1f);
+//	const float goal_position_tolerance = (path->goal_position_tolerance>0.f ? path->goal_position_tolerance : 0.1f);
+//	const float goal_angle_tolerance = (path->goal_angle_tolerance>0.f ? path->goal_angle_tolerance : 0.17f);
+//	for (std::vector<cv::Vec3d>::iterator pose = wall_poses.begin(); pose!=wall_poses.end(); ++pose)
+//	{
+//		std::cout << "  Next pose: " << pose->val[0] << ", " << pose->val[1] << ", " << pose->val[2] << std::endl;
+//
+//		// todo: mark as visited and do not approach a pose in the vicinity again in future
+//		// todo: use without wall task on longer distances
+//
+//		// publish computed next target
+//		//publishComputedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z, path->target_poses[i].pose.orientation.w), tf::Vector3(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z)), ros::Time::now(), map_frame_, robot_frame_));
+//
+//
+//		// get current robot speed
+//		double robot_speed_x = 0.; // [m/s]
+//		double robot_speed_theta = 0.;	// [rad/s]
+//		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
+//
+//		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
+//		const double max_speed = 0.5;
+//		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
+//
+//		// command new navigation goal
+//		mira::navigation::TaskPtr task(new mira::navigation::Task());
+//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(pose->val[0], pose->val[1]),
+//				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/maps/MapFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
+//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(true, true)));
+////		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(pose->val[0], pose->val[1]),
+////				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
+//		// todo: (last point true optional)
+//		//task->addSubTask(mira::navigation::SubTaskPtr(
+//		//	new mira::navigation::SmoothTransitionTask(/*smoothTransition=*/true,
+//		//	                                           /*allowTransit=*/true)));
+//		// todo: (last point allowTransit=false)
+//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(pose->val[2], 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
+//		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
+//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
+//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::WallDistanceTask(0.4, 0.5, mira::navigation::WallDistanceTask::KEEP_RIGHT)));
+//
+//		// Set this as our goal. Will cause the robot to start driving.
+//		mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
+//		r.wait();
+//
+//		// wait until close to target
+//		mira::Pose3 target_pose(pose->val[0], pose->val[1], 0., pose->val[2], 0., 0.);
+//		waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance);
+////		const double robot_freeze_timeout = 4.;	// [s]
+////		ros::Time last_robot_movement = ros::Time::now();
+////		while (true)
+////		{
+////			mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+////			double distance_to_goal = (pose->val[0]-robot_pose.x())*(pose->val[0]-robot_pose.x()) + (pose->val[1]-robot_pose.y())*(pose->val[1]-robot_pose.y());
+////			double delta_angle = normalize_angle(pose->val[2]-robot_pose.yaw());
+////			//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
+////			// also abort if the robot does not move for a long time
+////			{
+////				boost::mutex::scoped_lock lock(odom_msg_mutex_);
+////				robot_speed_x = odom_msg_.twist.twist.linear.x;
+////				robot_speed_theta = odom_msg_.twist.twist.angular.z;
+////			}
+////			if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
+////				last_robot_movement = ros::Time::now();
+////			double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
+////			//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
+////			boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
+////			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
+////					(distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
+////					(robot_freeze_time > robot_freeze_timeout))
+////				break;
+////			ros::spinOnce();
+////		}
+//	}
+//
+//	std::cout << "  Wall following successfully terminated." << std::endl;
+//
+//	// this sends the response back to the caller
+//	PathActionServer::Result res;
+//	wall_follow_action_server_->setSucceeded(res);
+//#else
+//	ROS_ERROR("ScitosDrive::wall_follow_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
+//
+//	// this sends the response back to the caller
+//	PathActionServer::Result res;
+//	wall_follow_action_server_->setAborted(res);
+//#endif
+//}
 
 
 bool ScitosDrive::reset_motor_stop(scitos_msgs::ResetMotorStop::Request  &req, scitos_msgs::ResetMotorStop::Response &res) {
