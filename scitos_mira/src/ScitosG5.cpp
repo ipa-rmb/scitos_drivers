@@ -6,7 +6,7 @@
 #include <boost/bind.hpp>
 #include <ros/spinner.h>
 
-ScitosG5::ScitosG5(std::vector<std::string> modules) : authority_("/", "scitos_ros", mira::Authority::ANONYMOUS),
+ScitosG5::ScitosG5(std::vector<std::string> modules) : authority_("/", "scitos_ros", mira::Authority::NORMAL), //mira::Authority::ANONYMOUS),
 					    node_() {
     ROS_INFO("Creating SCITOS G5 instance.");
 

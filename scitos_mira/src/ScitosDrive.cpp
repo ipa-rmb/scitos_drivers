@@ -13,6 +13,7 @@
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 #include <std_msgs/UInt64.h>
+#include <std_srvs/SetInt32.h>
 
 #include <opencv2/opencv.hpp>
 
@@ -70,6 +71,9 @@ void ScitosDrive::initialize() {
 	  else
 		  collision_test_.initialize(footprint_, merged_map->getCellSize());
   }
+
+  // offered services
+  robot_->getMiraAuthority().publishService(*this);
 #endif
 #ifndef DISABLE_MOVEMENTS
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback, this);
@@ -106,6 +110,62 @@ void ScitosDrive::initialize() {
   barrier_status_.barrier_stopped = false;
   barrier_status_.last_detection_stamp = ros::Time(0);
   robot_->registerSpinFunction(boost::bind(&ScitosDrive::publish_barrier_status, this));
+}
+
+// todo: just needed by the application
+template <typename Reflector>
+void ScitosDrive::reflect(Reflector& r)
+{
+	r.method("start_application", &ScitosDrive::startApplication, this, "This method starts the cleaning application.");
+	r.method("start_application_without_cleaning", &ScitosDrive::startApplicationWithoutCleaning, this, "This method starts the cleaning application without using the cleaning device.");
+	r.method("stop_application", &ScitosDrive::stopApplication, this, "This method stops the cleaning application.");
+}
+
+int ScitosDrive::startApplication(void)	// todo: later we should pass a parameter for the service_name of the respective application that shall be started
+{
+	std::string service_name = "set_application_status_application_wet_cleaning";
+	std::cout << ">>>>>>>>>>>>> Starting application." << std::endl;
+	robot_->getRosNode().setParam("use_cleaning_device", true);
+	std_srvs::SetInt32Request start_application_req;
+	std_srvs::SetInt32Response start_application_res;
+	start_application_req.data = 0;
+	ros::service::waitForService(service_name);
+	if (ros::service::call(service_name, start_application_req, start_application_res))
+		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
+	else
+		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
+	return 0;
+}
+
+int ScitosDrive::startApplicationWithoutCleaning(void)
+{
+	std::string service_name = "set_application_status_application_wet_cleaning";
+	std::cout << ">>>>>>>>>>>>> Starting application without cleaner." << std::endl;
+	robot_->getRosNode().setParam("use_cleaning_device", false);
+	std_srvs::SetInt32Request start_application_req;
+	std_srvs::SetInt32Response start_application_res;
+	start_application_req.data = 0;
+	ros::service::waitForService(service_name);
+	if (ros::service::call(service_name, start_application_req, start_application_res))
+		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
+	else
+		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
+	return 0;
+}
+
+int ScitosDrive::stopApplication(void)
+{
+	std::string service_name = "set_application_status_application_wet_cleaning";
+	std::cout << ">>>>>>>>>>>>> Stopping application." << std::endl;
+	std_srvs::SetInt32Request start_application_req;
+	std_srvs::SetInt32Response start_application_res;
+	start_application_req.data = 2;
+	ros::service::waitForService(service_name);
+	if (ros::service::call(service_name, start_application_req, start_application_res))
+		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
+	else
+		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
+	return 0;
 }
 
 void ScitosDrive::velocity_command_callback(const geometry_msgs::Twist::ConstPtr& msg) {

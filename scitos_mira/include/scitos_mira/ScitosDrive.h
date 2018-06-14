@@ -67,6 +67,11 @@ public:
 
 	void initialize();
 
+	template <typename Reflector> void reflect(Reflector& r);
+	int startApplication(void);
+	int startApplicationWithoutCleaning(void);
+	int stopApplication(void);
+
 	void velocity_command_callback(const geometry_msgs::Twist::ConstPtr& msg);
 
 	void odometry_data_callback(mira::ChannelRead<mira::robot::Odometry2> data);
