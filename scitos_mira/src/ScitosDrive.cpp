@@ -57,7 +57,7 @@ void ScitosDrive::initialize() {
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_clean_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/segmentation/Map", &ScitosDrive::map_segmented_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this); // todo: obsolete?
-  merged_map_channel_ = robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid >("/3d/MergedMap");
+  merged_map_channel_ = robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid >("/navigation/laser/Map");   //("/3d/MergedMap");  // todo: hack: make parameter, switch for real robot
   computed_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/computed_target_trajectory_monitor", 1);
   commanded_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/commanded_target_trajectory_monitor", 1);
 
@@ -131,10 +131,16 @@ int ScitosDrive::startApplication(void)	// todo: later we should pass a paramete
 	start_application_req.data = 0;
 	ros::service::waitForService(service_name);
 	if (ros::service::call(service_name, start_application_req, start_application_res))
+	{
 		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
+		return 0;
+	}
 	else
+	{
 		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
-	return 0;
+		return 1;
+	}
+	return 1;
 }
 
 int ScitosDrive::startApplicationWithoutCleaning(void)
@@ -147,25 +153,37 @@ int ScitosDrive::startApplicationWithoutCleaning(void)
 	start_application_req.data = 0;
 	ros::service::waitForService(service_name);
 	if (ros::service::call(service_name, start_application_req, start_application_res))
+	{
 		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
+		return 0;
+	}
 	else
+	{
 		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
-	return 0;
+		return 1;
+	}
+	return 1;
 }
 
 int ScitosDrive::stopApplication(void)
 {
 	std::string service_name = "set_application_status_application_wet_cleaning";
 	std::cout << ">>>>>>>>>>>>> Stopping application." << std::endl;
-	std_srvs::SetInt32Request start_application_req;
-	std_srvs::SetInt32Response start_application_res;
-	start_application_req.data = 2;
+	std_srvs::SetInt32Request stop_application_req;
+	std_srvs::SetInt32Response stop_application_res;
+	stop_application_req.data = 2;
 	ros::service::waitForService(service_name);
-	if (ros::service::call(service_name, start_application_req, start_application_res))
+	if (ros::service::call(service_name, stop_application_req, stop_application_res))
+	{
 		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
+		return 0;
+	}
 	else
+	{
 		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
-	return 0;
+		return 1;
+	}
+	return 1;
 }
 
 void ScitosDrive::velocity_command_callback(const geometry_msgs::Twist::ConstPtr& msg) {
@@ -600,6 +618,8 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	for (size_t i=0; i<path->target_poses.size(); ++i)
 	{
 		mira::Time start_time = mira::Time::now();
+
+		std::cout << "" << path_action_server_ << std::endl;
 
 		// convert target pose to mira::Pose3
 		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
