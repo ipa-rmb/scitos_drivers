@@ -57,7 +57,7 @@ void ScitosDrive::initialize() {
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_clean_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/segmentation/Map", &ScitosDrive::map_segmented_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this); // todo: obsolete?
-  merged_map_channel_ = robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid >("/navigation/laser/Map");   //("/3d/MergedMap");  // todo: hack: make parameter, switch for real robot
+  merged_map_channel_ = robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid >("ObstacleMap");
   computed_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/computed_target_trajectory_monitor", 1);
   commanded_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/commanded_target_trajectory_monitor", 1);
 
@@ -67,13 +67,17 @@ void ScitosDrive::initialize() {
   if (!footprint_.empty()) {
 	  mira::ChannelRead<mira::maps::OccupancyGrid> merged_map = robot_->getMiraAuthority().waitForData(merged_map_channel_, mira::Duration::seconds(10));
 	  if (!merged_map.isValid())
-		  ROS_ERROR("Cannot read merged map channel '/3d/MergedMap'");
+		  ROS_ERROR("Cannot read merged map channel '%s'", merged_map_channel_.getID().c_str());
 	  else
 		  collision_test_.initialize(footprint_, merged_map->getCellSize());
   }
 
   // offered services
   robot_->getMiraAuthority().publishService(*this);
+
+  // offered channels
+  application_status_sub_ = robot_->getRosNode().subscribe("/application_wet_cleaning_status", 1, &ScitosDrive::application_status_callback, this);
+  application_status_channel_ = robot_->getMiraAuthority().publish<int>("AutomaticCleaningStatus");	// todo: hack: put to separate module
 #endif
 #ifndef DISABLE_MOVEMENTS
   cmd_vel_subscriber_ = robot_->getRosNode().subscribe("/cmd_vel", 1000, &ScitosDrive::velocity_command_callback, this);
@@ -112,7 +116,7 @@ void ScitosDrive::initialize() {
   robot_->registerSpinFunction(boost::bind(&ScitosDrive::publish_barrier_status, this));
 }
 
-// todo: just needed by the application
+// todo: hack just needed by the application
 template <typename Reflector>
 void ScitosDrive::reflect(Reflector& r)
 {
@@ -121,6 +125,7 @@ void ScitosDrive::reflect(Reflector& r)
 	r.method("stop_application", &ScitosDrive::stopApplication, this, "This method stops the cleaning application.");
 }
 
+// todo: hack: put to separate module
 int ScitosDrive::startApplication(void)	// todo: later we should pass a parameter for the service_name of the respective application that shall be started
 {
 	std::string service_name = "set_application_status_application_wet_cleaning";
@@ -143,6 +148,7 @@ int ScitosDrive::startApplication(void)	// todo: later we should pass a paramete
 	return 1;
 }
 
+// todo: hack: put to separate module
 int ScitosDrive::startApplicationWithoutCleaning(void)
 {
 	std::string service_name = "set_application_status_application_wet_cleaning";
@@ -165,6 +171,7 @@ int ScitosDrive::startApplicationWithoutCleaning(void)
 	return 1;
 }
 
+// todo: hack: put to separate module
 int ScitosDrive::stopApplication(void)
 {
 	std::string service_name = "set_application_status_application_wet_cleaning";
@@ -184,6 +191,15 @@ int ScitosDrive::stopApplication(void)
 		return 1;
 	}
 	return 1;
+}
+
+// todo: hack: put to separate module
+void ScitosDrive::application_status_callback(const std_msgs::Int32::ConstPtr& msg)
+{
+	mira::ChannelWrite<int> w = application_status_channel_.write();
+	w->timestamp = mira::Time::now(); // optional
+	w->value() = msg->data; // oder 1
+	w.finish();
 }
 
 void ScitosDrive::velocity_command_callback(const geometry_msgs::Twist::ConstPtr& msg) {
@@ -619,7 +635,14 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	{
 		mira::Time start_time = mira::Time::now();
 
-		std::cout << "" << path_action_server_ << std::endl;
+		std::cout << "path_action_server_.isPreemptRequested()=" << path_action_server_->isPreemptRequested() << std::endl;
+		if (path_action_server_->isPreemptRequested() == true)
+		{
+			// this sends the response back to the caller
+			PathActionServer::Result res;
+			path_action_server_->setAborted(res);
+			return;
+		}
 
 		// convert target pose to mira::Pose3
 		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
