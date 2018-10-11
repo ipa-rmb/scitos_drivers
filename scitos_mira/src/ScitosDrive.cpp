@@ -15,7 +15,7 @@
 #include <std_msgs/UInt64.h>
 #include <std_srvs/SetInt32.h>
 
-#include <opencv2/opencv.hpp>
+//#include <opencv2/opencv.hpp>
 
 //#define DISABLE_MOVEMENTS	// todo: remove
 
@@ -995,8 +995,8 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	cv_bridge::CvImagePtr cv_ptr_obj;
 	cv_ptr_obj = cv_bridge::toCvCopy(goal->area_map, sensor_msgs::image_encodings::MONO8);
 	const cv::Mat area_map = cv_ptr_obj->image;
-	cv::imshow("area_map", area_map);
-	cv::waitKey();
+//	cv::imshow("area_map", area_map);
+//	cv::waitKey();
 #else
 	ROS_ERROR("ScitosDrive::wall_follow_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
 
