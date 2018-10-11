@@ -13,7 +13,7 @@
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 #include <std_msgs/UInt64.h>
-#include <std_srvs/SetInt32.h>
+#include <cob_srvs/SetInt.h>
 
 //#include <opencv2/opencv.hpp>
 
@@ -131,8 +131,8 @@ int ScitosDrive::startApplication(void)	// todo: later we should pass a paramete
 	std::string service_name = "set_application_status_application_wet_cleaning";
 	std::cout << ">>>>>>>>>>>>> Starting application." << std::endl;
 	robot_->getRosNode().setParam("use_cleaning_device", true);
-	std_srvs::SetInt32Request start_application_req;
-	std_srvs::SetInt32Response start_application_res;
+	cob_srvs::SetIntRequest start_application_req;
+	cob_srvs::SetIntResponse start_application_res;
 	start_application_req.data = 0;
 	ros::service::waitForService(service_name);
 	if (ros::service::call(service_name, start_application_req, start_application_res))
@@ -154,8 +154,8 @@ int ScitosDrive::startApplicationWithoutCleaning(void)
 	std::string service_name = "set_application_status_application_wet_cleaning";
 	std::cout << ">>>>>>>>>>>>> Starting application without cleaner." << std::endl;
 	robot_->getRosNode().setParam("use_cleaning_device", false);
-	std_srvs::SetInt32Request start_application_req;
-	std_srvs::SetInt32Response start_application_res;
+	cob_srvs::SetIntRequest start_application_req;
+	cob_srvs::SetIntResponse start_application_res;
 	start_application_req.data = 0;
 	ros::service::waitForService(service_name);
 	if (ros::service::call(service_name, start_application_req, start_application_res))
@@ -176,8 +176,8 @@ int ScitosDrive::stopApplication(void)
 {
 	std::string service_name = "set_application_status_application_wet_cleaning";
 	std::cout << ">>>>>>>>>>>>> Stopping application." << std::endl;
-	std_srvs::SetInt32Request stop_application_req;
-	std_srvs::SetInt32Response stop_application_res;
+	cob_srvs::SetIntRequest stop_application_req;
+	cob_srvs::SetIntResponse stop_application_res;
 	stop_application_req.data = 2;
 	ros::service::waitForService(service_name);
 	if (ros::service::call(service_name, stop_application_req, stop_application_res))
