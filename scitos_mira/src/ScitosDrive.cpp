@@ -993,7 +993,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 
 	const double map_resolution = goal->map_resolution;	// in [m/cell]
 	const cv::Point2d map_origin(goal->map_origin.position.x, goal->map_origin.position.y);
-	const double target_wall_distance_px = robot_radius_/map_resolution;	// target distance of robot center to wall todo: check if valid
+	const double target_wall_distance_px = 0.55/map_resolution; // todo: robot_radius_/map_resolution;	// target distance of robot center to wall todo: check if valid
 	const double target_wall_distance_px_epsilon = 1;			// allowed deviation from target distance of robot center to wall, used for sampling goal poses along the wall
 
 	// convert the map msg in cv format
@@ -1070,8 +1070,8 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	}
 
 	// collect the wall following path
-	std::vector<cv::Vec3d> wall_poses;
-	wall_poses.push_back(cv::Vec3d(current_pos.x*map_resolution+map_origin.x, current_pos.y*map_resolution+map_origin.y, driving_direction.at<float>(current_pos)));
+	std::vector<cv::Vec3d> wall_poses_dense, wall_poses;
+	wall_poses_dense.push_back(cv::Vec3d(current_pos.x*map_resolution+map_origin.x, current_pos.y*map_resolution+map_origin.y, driving_direction.at<float>(current_pos)));
 	level_set_map.at<uchar>(current_pos) = 0;
 	while (true)
 	{
@@ -1129,12 +1129,25 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		// prepare next step
 		level_set_map.at<uchar>(next_pos) = 0;
 		current_pos = next_pos;
-		wall_poses.push_back(cv::Vec3d(current_pos.x*map_resolution+map_origin.x, current_pos.y*map_resolution+map_origin.y, driving_direction.at<float>(current_pos)));
+		wall_poses_dense.push_back(cv::Vec3d(current_pos.x*map_resolution+map_origin.x, current_pos.y*map_resolution+map_origin.y, driving_direction.at<float>(current_pos)));
+	}
+	// reduce density of wall_poses
+	wall_poses.push_back(wall_poses_dense[0]);
+	size_t last_used_pose_index = 0;
+	for (size_t i=1; i<wall_poses_dense.size(); ++i)
+	{
+		const cv::Vec3d& p0 = wall_poses_dense[last_used_pose_index];
+		const cv::Vec3d& p1 = wall_poses_dense[i];
+		if ((p1.val[0]-p0.val[0])*(p1.val[0]-p0.val[0]) + (p1.val[1]-p0.val[1])*(p1.val[1]-p0.val[1]) > 0.1*0.1 || normalize_angle(p1.val[2]-p0.val[2]) > 1.5708)
+		{
+			wall_poses.push_back(wall_poses_dense[i]);
+			last_used_pose_index = i;
+		}
 	}
 
 	// display path
 	std::cout << "printing path" << std::endl;
-	for(size_t step=1; step<wall_poses.size(); ++step)
+	for(size_t step=wall_poses.size()-1; step<wall_poses.size(); ++step)
 	{
 		cv::Mat fov_path_map = area_map.clone();
 		cv::resize(fov_path_map, fov_path_map, cv::Size(), 2, 2, cv::INTER_LINEAR);
@@ -1154,9 +1167,11 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 				cv::line(fov_path_map, 2*p2, 2*p3, cv::Scalar(0.2), 1);
 			}
 		}
-		cv::imshow("cell path", fov_path_map);
-		if (step % 100 == 0)
-		cv::waitKey();
+		if (step == wall_poses.size()-1)
+		{
+			cv::imshow("cell path", fov_path_map);
+			cv::waitKey(20);
+		}
 	}
 
 	// move through the wall poses
@@ -1202,9 +1217,9 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		//	new mira::navigation::SmoothTransitionTask(/*smoothTransition=*/true,
 		//	                                           /*allowTransit=*/true)));
 		// todo: (last point allowTransit=false)
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(pose->val[2], 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(pose->val[2], 1.5708)));
 		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::WallDistanceTask(0.1, 1.0, mira::navigation::WallDistanceTask::KEEP_RIGHT)));
 
 		// Set this as our goal. Will cause the robot to start driving.
@@ -1260,7 +1275,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	std::cout << "  Wall following successfully terminated." << std::endl;
 
 	// this sends the response back to the caller
-	PathActionServer::Result res;
+	WallFollowActionServer::Result res;
 	wall_follow_action_server_->setSucceeded(res);
 
 #else
