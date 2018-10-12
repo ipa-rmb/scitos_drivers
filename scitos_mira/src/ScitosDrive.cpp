@@ -1159,6 +1159,110 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		cv::waitKey();
 	}
 
+	// move through the wall poses
+	const float path_tolerance = (goal->path_tolerance>0.f ? goal->path_tolerance : 0.1f);
+	const float goal_position_tolerance = (goal->goal_position_tolerance>0.f ? goal->goal_position_tolerance : 0.1f);
+	const float goal_angle_tolerance = (goal->goal_angle_tolerance>0.f ? goal->goal_angle_tolerance : 0.17f);
+	for (std::vector<cv::Vec3d>::iterator pose = wall_poses.begin(); pose!=wall_poses.end(); ++pose)
+	{
+		std::cout << "  Next pose: " << pose->val[0] << ", " << pose->val[1] << ", " << pose->val[2] << std::endl;
+
+		// convert target pose to mira::Pose3
+		//mira::Pose2 target_pose(pose->val[0], pose->val[1], pose->val[2]);
+		mira::Pose3 target_pose(pose->val[0], pose->val[1], 0., pose->val[2], 0., 0.);
+
+		// todo: mark as visited and do not approach a pose in the vicinity again in future
+		// todo: use without wall task on longer distances
+
+		// publish computed next target
+		//Eigen::Quaternion q = mira::quaternionFromYawPitchRoll(pose->val[2], 0., 0.);
+		publishComputedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(target_pose.r.x(), target_pose.r.y(), target_pose.r.z(), target_pose.r.w()), tf::Vector3(target_pose.x(), target_pose.y(), target_pose.z())), ros::Time::now(), map_frame_, robot_frame_));
+
+		// publish commanded next target
+		publishCommandedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(target_pose.r.x(), target_pose.r.y(), target_pose.r.z(), target_pose.r.w()), tf::Vector3(target_pose.x(), target_pose.y(), target_pose.z())), ros::Time::now(), map_frame_, robot_frame_));
+
+		// get current robot speed
+		double robot_speed_x = 0.; // [m/s]
+		double robot_speed_theta = 0.;	// [rad/s]
+		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
+
+		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
+		const double max_speed = 0.3;
+		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
+
+		// command new navigation goal
+		mira::navigation::TaskPtr task(new mira::navigation::Task());
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(pose->val[0], pose->val[1]),
+				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/maps/MapFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(true, true)));
+//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(pose->val[0], pose->val[1]),
+//				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
+		// todo: (last point true optional)
+		//task->addSubTask(mira::navigation::SubTaskPtr(
+		//	new mira::navigation::SmoothTransitionTask(/*smoothTransition=*/true,
+		//	                                           /*allowTransit=*/true)));
+		// todo: (last point allowTransit=false)
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(pose->val[2], 0.087)));	// impose strong precision constraints, otherwise path cannot be followed properly
+		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::WallDistanceTask(0.1, 1.0, mira::navigation::WallDistanceTask::KEEP_RIGHT)));
+
+		// Set this as our goal. Will cause the robot to start driving.
+		mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
+		r.wait();
+
+		// wait until close to target
+		const int return_code = waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance, -1.);
+		std::cout << "   returned from waitForTargetApproach with return code: " << return_code << std::endl;
+
+		// on robot_freeze try move command again with driving backwards allowed
+		if (return_code==3)
+		{
+			std::cout << "############################ Cannot drive to goal, trying with driving backwards allowed now." << std::endl;
+			task->getSubTask<mira::navigation::PreferredDirectionTask>()->direction = mira::navigation::PreferredDirectionTask::BOTH;
+			//task->getSubTask<mira::navigation::PreferredDirectionTask>()->wrongDirectionCost = 0.5f;
+			robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task).get();
+			waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance, -1.); // wait until close to target
+		}
+
+
+
+//		// wait until close to target
+//		mira::Pose3 target_pose(pose->val[0], pose->val[1], 0., pose->val[2], 0., 0.);
+//		waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance);
+////		const double robot_freeze_timeout = 4.;	// [s]
+////		ros::Time last_robot_movement = ros::Time::now();
+////		while (true)
+////		{
+////			mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+////			double distance_to_goal = (pose->val[0]-robot_pose.x())*(pose->val[0]-robot_pose.x()) + (pose->val[1]-robot_pose.y())*(pose->val[1]-robot_pose.y());
+////			double delta_angle = normalize_angle(pose->val[2]-robot_pose.yaw());
+////			//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
+////			// also abort if the robot does not move for a long time
+////			{
+////				boost::mutex::scoped_lock lock(odom_msg_mutex_);
+////				robot_speed_x = odom_msg_.twist.twist.linear.x;
+////				robot_speed_theta = odom_msg_.twist.twist.angular.z;
+////			}
+////			if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
+////				last_robot_movement = ros::Time::now();
+////			double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
+////			//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
+////			boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
+////			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
+////					(distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
+////					(robot_freeze_time > robot_freeze_timeout))
+////				break;
+////			ros::spinOnce();
+////		}
+	}
+
+	std::cout << "  Wall following successfully terminated." << std::endl;
+
+	// this sends the response back to the caller
+	PathActionServer::Result res;
+	wall_follow_action_server_->setSucceeded(res);
+
 #else
 	ROS_ERROR("ScitosDrive::wall_follow_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
 
