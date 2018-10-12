@@ -490,6 +490,7 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 		bool debug_texts)
 {
 	// compute distance between footprint and closest obstacle
+	debug_texts = true;
 
 	// receive the merged map
 	if (merged_map.isEmpty())
@@ -511,6 +512,10 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 		cv::convertScaleAbs(threshold_img, threshold_img);	// convert from 32FC1 to 8UC1
 		cv::distanceTransform(threshold_img, distance_transformed_map, CV_DIST_L2, 5);
 		if (debug_texts) std::cout << "distanceTransform done" << std::endl;
+		cv::imshow("merged_map", merged_map);
+		cv::imshow("threshold_img", threshold_img);
+		cv::imshow("distance_transformed_map", distance_transformed_map);
+		cv::waitKey();
 	}
 
 	// convert target_pose into coordinate system of merged map
