@@ -991,12 +991,151 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 #ifdef __WITH_PILOT__
 	ROS_INFO("ScitosDrive::wall_follow_callback: Driving along a wall.");
 
-	// convert the area_map msg in cv format
+	const double map_resolution = goal->map_resolution;	// in [m/cell]
+	const cv::Point2d map_origin(goal->map_origin.position.x, goal->map_origin.position.y);
+	const double target_wall_distance_px = robot_radius_/map_resolution;	// target distance of robot center to wall todo: check if valid
+	const double target_wall_distance_px_epsilon = 0.1/map_resolution;		// allowed deviated from target distance of robot center to wall, used for sampling goal poses along the wall
+
+	// convert the map msg in cv format
 	cv_bridge::CvImagePtr cv_ptr_obj;
+	cv_ptr_obj = cv_bridge::toCvCopy(goal->map, sensor_msgs::image_encodings::MONO8);
+	const cv::Mat map = cv_ptr_obj->image;
+	cv::imshow("map", map);
+	cv::waitKey();
+
+	// convert the area_map msg in cv format
 	cv_ptr_obj = cv_bridge::toCvCopy(goal->area_map, sensor_msgs::image_encodings::MONO8);
 	const cv::Mat area_map = cv_ptr_obj->image;
 	cv::imshow("area_map", area_map);
 	cv::waitKey();
+
+	// convert the coverage_map msg in cv format
+	cv_ptr_obj = cv_bridge::toCvCopy(goal->coverage_map, sensor_msgs::image_encodings::MONO8);
+	const cv::Mat coverage_map = cv_ptr_obj->image;
+	cv::imshow("coverage_map", coverage_map);
+	cv::waitKey();
+
+	// get the distance-transformed map
+	//cv::erode(map, temporary_map, cv::Mat());
+	cv::Mat distance_map;	//variable for the distance-transformed map, type: CV_32FC1
+	cv::distanceTransform(area_map, distance_map, CV_DIST_L2, 5);
+	cv::Mat distance_map_disp;
+	cv::convertScaleAbs(distance_map, distance_map_disp);	// conversion to 8 bit image
+	cv::imshow("distance_map_disp", distance_map_disp);
+	cv::waitKey();
+
+//	// reduce the distance transformed map to the current area
+//	for (int v=0; v<distance_map.rows; ++v)
+//		for (int u=0; u<distance_map.cols; ++u)
+//			if (area_map.at<uchar>(v,u)==0)
+//				distance_map.at<float>(v,u) = 0.f;
+//	cv::convertScaleAbs(distance_map, distance_map_disp);	// conversion to 8 bit image
+//	cv::imshow("distance_map_area_disp", distance_map_disp);
+//	cv::waitKey();
+
+	// find the points near walls in the accessible area of the room
+	cv::Mat level_set_map = cv::Mat::zeros(distance_map.rows, distance_map.cols, CV_8UC1);
+	for (int v=0; v<distance_map.rows; ++v)
+		for (int u=0; u<distance_map.cols; ++u)
+			if (fabs(distance_map.at<double>(v,u)-target_wall_distance_px) < target_wall_distance_px_epsilon)
+				level_set_map.at<uchar>(v,u) = 255;
+
+	// determine a preferred driving direction for each point
+	const double pi = 3.14159265359;
+	const double direction_offset = -0.5*pi;		// the direction offset is -pi/2 for wall following on the right side and +pi/2 for wall following on the left side
+	cv::Mat distance_map_dx, distance_map_dy;
+	cv::Sobel(distance_map_disp, distance_map_dx, CV_64F, 1, 0, 3);
+	cv::Sobel(distance_map_disp, distance_map_dy, CV_64F, 0, 1, 3);
+	cv::Mat driving_direction(distance_map.rows, distance_map.cols, CV_32FC1);
+	for (int v=0; v<distance_map.rows; ++v)
+		for (int u=0; u<distance_map.cols; ++u)
+			if (level_set_map.at<uchar>(v,u) == 255)
+				driving_direction.at<float>(v,u) = atan2(distance_map_dy.at<double>(v,u), distance_map_dx.at<double>(v,u)) + direction_offset;
+
+	// find the closest position to the robot pose
+	mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+	cv::Point current_pos(0,0);
+	double min_dist_sqr = 1e10;
+	for (int v=0; v<distance_map.rows; ++v)
+	{
+		for (int u=0; u<distance_map.cols; ++u)
+		{
+			if (level_set_map.at<uchar>(v,u) == 255)
+			{
+				cv::Point2d pos(u*map_resolution+map_origin.x, v*map_resolution+map_origin.y);
+				const double dist_sqr = (pos.x-robot_pose.x())*(pos.x-robot_pose.x()) + (pos.y-robot_pose.y())*(pos.y-robot_pose.y());
+				if (dist_sqr < min_dist_sqr)
+				{
+					min_dist_sqr = dist_sqr;
+					current_pos = cv::Point(u,v);
+				}
+			}
+		}
+	}
+
+	// collect the wall following path
+	std::vector<cv::Vec3d> wall_poses;
+	wall_poses.push_back(cv::Vec3d(current_pos.x*map_resolution+map_origin.x, current_pos.y*map_resolution+map_origin.y, driving_direction.at<float>(current_pos)));
+	level_set_map.at<uchar>(current_pos) = 0;
+	while (true)
+	{
+		cv::Point next_pos(-1,-1);
+		// try to find a suitable point in the neighborhood
+		double max_cos_angle = -1e10;
+		const double dd_x = cos(driving_direction.at<float>(current_pos));
+		const double dd_y = sin(driving_direction.at<float>(current_pos));
+		for (int dv=-1; dv<=1; ++dv)
+		{
+			for (int du=-1; du<=1; ++du)
+			{
+				const int nu = current_pos.x+du;
+				const int nv = current_pos.y+dv;
+				if (nu<0 || nu>=level_set_map.cols || nv<0 || nv>level_set_map.rows || level_set_map.at<uchar>(nv,nu)!=255)	// the last condition implicitly excludes the center pixel
+					continue;
+
+				level_set_map.at<uchar>(nv,nu) = 0;		// mark all neighboring points as visited
+
+				// determine the angle difference
+				double cos_angle = dd_x*du + dd_y*dv;
+				if (cos_angle > max_cos_angle)
+				{
+					max_cos_angle = cos_angle;
+					next_pos = cv::Point(nu, nv);
+				}
+			}
+		}
+
+		// if no suitable point was found in the neighborhood search the whole map for the closest next point
+		if (next_pos.x < 0)
+		{
+			double min_dist_sqr = 1e10;
+			for (int v=0; v<level_set_map.rows; ++v)
+			{
+				for (int u=0; u<level_set_map.cols; ++u)
+				{
+					if (level_set_map.at<uchar>(v,u) == 255)
+					{
+						const double dist_sqr = (current_pos.x-u)*(current_pos.x-u) + (current_pos.y-v)*(current_pos.y-v);
+						if (dist_sqr < min_dist_sqr)
+						{
+							min_dist_sqr = dist_sqr;
+							next_pos = cv::Point(u,v);
+						}
+					}
+				}
+			}
+		}
+
+		// if still no other point can be found we are done
+		if (next_pos.x < 0)
+			break;
+
+		// prepare next step
+		level_set_map.at<uchar>(next_pos) = 0;
+		current_pos = next_pos;
+		wall_poses.push_back(cv::Vec3d(current_pos.x*map_resolution+map_origin.x, current_pos.y*map_resolution+map_origin.y, driving_direction.at<float>(current_pos)));
+	}
+
 #else
 	ROS_ERROR("ScitosDrive::wall_follow_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
 
