@@ -1138,7 +1138,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	{
 		const cv::Vec3d& p0 = wall_poses_dense[last_used_pose_index];
 		const cv::Vec3d& p1 = wall_poses_dense[i];
-		if ((p1.val[0]-p0.val[0])*(p1.val[0]-p0.val[0]) + (p1.val[1]-p0.val[1])*(p1.val[1]-p0.val[1]) > 0.1*0.1 || normalize_angle(p1.val[2]-p0.val[2]) > 1.5708)
+		if ((p1.val[0]-p0.val[0])*(p1.val[0]-p0.val[0]) + (p1.val[1]-p0.val[1])*(p1.val[1]-p0.val[1]) > 0.16*0.16 || normalize_angle(p1.val[2]-p0.val[2]) > 1.5708)
 		{
 			wall_poses.push_back(wall_poses_dense[i]);
 			last_used_pose_index = i;
@@ -1146,31 +1146,34 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	}
 
 	// display path
-	std::cout << "printing path" << std::endl;
-	for(size_t step=wall_poses.size()-1; step<wall_poses.size(); ++step)
+	if (false)
 	{
-		cv::Mat fov_path_map = area_map.clone();
-		cv::resize(fov_path_map, fov_path_map, cv::Size(), 2, 2, cv::INTER_LINEAR);
-		if (wall_poses.size() > 0)
-			cv::circle(fov_path_map, 2*cv::Point((wall_poses[0].val[0]-map_origin.x)/map_resolution, (wall_poses[0].val[1]-map_origin.y)/map_resolution), 2, cv::Scalar(0.6), CV_FILLED);
-		for(size_t i=1; i<=step; ++i)
+		std::cout << "printing path" << std::endl;
+		for(size_t step=wall_poses.size()-1; step<wall_poses.size(); ++step)
 		{
-			cv::Point p1((wall_poses[i-1].val[0]-map_origin.x)/map_resolution, (wall_poses[i-1].val[1]-map_origin.y)/map_resolution);
-			cv::Point p2((wall_poses[i].val[0]-map_origin.x)/map_resolution, (wall_poses[i].val[1]-map_origin.y)/map_resolution);
-			cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.8), CV_FILLED);
-			cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
-			if (i==step)
+			cv::Mat fov_path_map = area_map.clone();
+			cv::resize(fov_path_map, fov_path_map, cv::Size(), 2, 2, cv::INTER_LINEAR);
+			if (wall_poses.size() > 0)
+				cv::circle(fov_path_map, 2*cv::Point((wall_poses[0].val[0]-map_origin.x)/map_resolution, (wall_poses[0].val[1]-map_origin.y)/map_resolution), 2, cv::Scalar(0.6), CV_FILLED);
+			for(size_t i=1; i<=step; ++i)
 			{
-				cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.3), CV_FILLED);
+				cv::Point p1((wall_poses[i-1].val[0]-map_origin.x)/map_resolution, (wall_poses[i-1].val[1]-map_origin.y)/map_resolution);
+				cv::Point p2((wall_poses[i].val[0]-map_origin.x)/map_resolution, (wall_poses[i].val[1]-map_origin.y)/map_resolution);
+				cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.8), CV_FILLED);
 				cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
-				cv::Point p3(p2.x+5*cos(wall_poses[i].val[2]), p2.y+5*sin(wall_poses[i].val[2]));
-				cv::line(fov_path_map, 2*p2, 2*p3, cv::Scalar(0.2), 1);
+				if (i==step)
+				{
+					cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.3), CV_FILLED);
+					cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
+					cv::Point p3(p2.x+5*cos(wall_poses[i].val[2]), p2.y+5*sin(wall_poses[i].val[2]));
+					cv::line(fov_path_map, 2*p2, 2*p3, cv::Scalar(0.2), 1);
+				}
 			}
-		}
-		if (step == wall_poses.size()-1)
-		{
-			cv::imshow("cell path", fov_path_map);
-			cv::waitKey(20);
+			if (step == wall_poses.size()-1)
+			{
+				cv::imshow("cell path", fov_path_map);
+				cv::waitKey(20);
+			}
 		}
 	}
 
@@ -1178,16 +1181,15 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	const float path_tolerance = (goal->path_tolerance>0.f ? goal->path_tolerance : 0.1f);
 	const float goal_position_tolerance = (goal->goal_position_tolerance>0.f ? goal->goal_position_tolerance : 0.1f);
 	const float goal_angle_tolerance = (goal->goal_angle_tolerance>0.f ? goal->goal_angle_tolerance : 0.17f);
+	// todo: parameters!
+	const double target_wall_distance = 0.1;	// target distance between robot and wall during wall following, in [m]
+	const double wall_following_off_traveling_distance_threshold = 1.0;		// when traveling farther than this threshold distance, the robot does not use the wall following objective, in [m]
 	for (std::vector<cv::Vec3d>::iterator pose = wall_poses.begin(); pose!=wall_poses.end(); ++pose)
 	{
 		std::cout << "  Next pose: " << pose->val[0] << ", " << pose->val[1] << ", " << pose->val[2] << std::endl;
 
 		// convert target pose to mira::Pose3
-		//mira::Pose2 target_pose(pose->val[0], pose->val[1], pose->val[2]);
 		mira::Pose3 target_pose(pose->val[0], pose->val[1], 0., pose->val[2], 0., 0.);
-
-		// todo: mark as visited and do not approach a pose in the vicinity again in future
-		// todo: use without wall task on longer distances
 
 		// publish computed next target
 		//Eigen::Quaternion q = mira::quaternionFromYawPitchRoll(pose->val[2], 0., 0.);
@@ -1220,7 +1222,13 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(pose->val[2], 1.5708)));
 		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::WallDistanceTask(0.1, 1.0, mira::navigation::WallDistanceTask::KEEP_RIGHT)));
+
+		// todo: use without wall task on longer distances or on targets in free space far from a wall
+		mira::Pose3 current_robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+		const double distance_to_last_pose_sqr = (pose->val[0]-current_robot_pose.x())*(pose->val[0]-current_robot_pose.x()) + (pose->val[1]-current_robot_pose.y())*(pose->val[1]-current_robot_pose.y());
+		if (distance_to_last_pose_sqr <= wall_following_off_traveling_distance_threshold*wall_following_off_traveling_distance_threshold &&
+				computeFootprintToObstacleDistance(mira::transform_cast<mira::Pose2>(target_pose)) < 2*target_wall_distance)
+			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::WallDistanceTask(target_wall_distance, 1.0, mira::navigation::WallDistanceTask::KEEP_RIGHT)));
 
 		// Set this as our goal. Will cause the robot to start driving.
 		mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
@@ -1239,37 +1247,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 			robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task).get();
 			waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance, -1.); // wait until close to target
 		}
-
-
-
-//		// wait until close to target
-//		mira::Pose3 target_pose(pose->val[0], pose->val[1], 0., pose->val[2], 0., 0.);
-//		waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance);
-////		const double robot_freeze_timeout = 4.;	// [s]
-////		ros::Time last_robot_movement = ros::Time::now();
-////		while (true)
-////		{
-////			mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
-////			double distance_to_goal = (pose->val[0]-robot_pose.x())*(pose->val[0]-robot_pose.x()) + (pose->val[1]-robot_pose.y())*(pose->val[1]-robot_pose.y());
-////			double delta_angle = normalize_angle(pose->val[2]-robot_pose.yaw());
-////			//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
-////			// also abort if the robot does not move for a long time
-////			{
-////				boost::mutex::scoped_lock lock(odom_msg_mutex_);
-////				robot_speed_x = odom_msg_.twist.twist.linear.x;
-////				robot_speed_theta = odom_msg_.twist.twist.angular.z;
-////			}
-////			if (fabs(robot_speed_x) > 0.01 || fabs(robot_speed_theta) > 0.01)
-////				last_robot_movement = ros::Time::now();
-////			double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
-////			//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
-////			boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
-////			if (nav_pilot_event_status_.compare("PlanAndDrive")!=0 ||
-////					(distance_to_goal<goal_position_tolerance*goal_position_tolerance && fabs(delta_angle)<goal_angle_tolerance) ||
-////					(robot_freeze_time > robot_freeze_timeout))
-////				break;
-////			ros::spinOnce();
-////		}
 	}
 
 	std::cout << "  Wall following successfully terminated." << std::endl;
