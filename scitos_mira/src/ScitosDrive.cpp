@@ -1181,9 +1181,8 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	const float path_tolerance = (goal->path_tolerance>0.f ? goal->path_tolerance : 0.1f);
 	const float goal_position_tolerance = (goal->goal_position_tolerance>0.f ? goal->goal_position_tolerance : 0.1f);
 	const float goal_angle_tolerance = (goal->goal_angle_tolerance>0.f ? goal->goal_angle_tolerance : 0.17f);
-	// todo: parameters!
-	const double target_wall_distance = 0.1;	// target distance between robot and wall during wall following, in [m]
-	const double wall_following_off_traveling_distance_threshold = 1.0;		// when traveling farther than this threshold distance, the robot does not use the wall following objective, in [m]
+	const float target_wall_distance = (goal->target_wall_distance>=0.f ? goal->target_wall_distance : 0.1f);	// target distance between robot and wall during wall following, in [m]
+	const float wall_following_off_traveling_distance_threshold = (goal->wall_following_off_traveling_distance_threshold>=0.f ? goal->wall_following_off_traveling_distance_threshold : 1.0f);		// when traveling farther than this threshold distance, the robot does not use the wall following objective, in [m]
 	for (std::vector<cv::Vec3d>::iterator pose = wall_poses.begin(); pose!=wall_poses.end(); ++pose)
 	{
 		std::cout << "  Next pose: " << pose->val[0] << ", " << pose->val[1] << ", " << pose->val[2] << std::endl;
