@@ -479,14 +479,14 @@ void ScitosDrive::getCurrentRobotSpeed(double& robot_speed_x, double& robot_spee
 float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_pose)
 {
 	mira::Pose2 target_pose_in_merged_map;
-	mira::maps::OccupancyGrid merged_map;
+	mira::maps::GridMap<double,1> merged_map;
 	mira::maps::GridMap<float> distance_transformed_map;
 	boost::shared_ptr<mira::RigidTransform2f> odometry_to_map;
 	return computeFootprintToObstacleDistance(target_pose, target_pose_in_merged_map, merged_map, distance_transformed_map, odometry_to_map);
 }
 
 float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_pose, mira::Pose2& target_pose_in_merged_map,
-		mira::maps::OccupancyGrid& merged_map, mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map,
+		mira::maps::GridMap<double,1>& merged_map, mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map,
 		bool debug_texts)
 {
 	// compute distance between footprint and closest obstacle
@@ -496,7 +496,7 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 	{
 		//merged_map = merged_map_channel_.read(/*mira::Time::now(), mira::Duration::seconds(1)*/)->value().clone(); // todo: enforce current data? need exception handling!
 		boost::mutex::scoped_lock lock(cost_map_mutex_);
-		merged_map = cost_map_.getMat().clone();
+		merged_map = cost_map_.clone();
 		if (debug_texts) std::cout << "merged map: " << merged_map.size() << "  "<<  merged_map.getCellSize() << " " <<  merged_map.getOffset() << std::endl;
 	}
 
@@ -507,7 +507,8 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 		if (debug_texts) std::cout << "distance_transformed_map: " << distance_transformed_map.size() << std::endl;
 		// collision_test_.distanceTransform(merged_map, distance_transformed_map);	// throws error, the code of this function is copied here
 		cv::Mat threshold_img;
-		cv::threshold(merged_map, threshold_img, 99, 255, CV_THRESH_BINARY_INV);
+		cv::threshold(merged_map, threshold_img, 0.99, 255, CV_THRESH_BINARY_INV);
+		cv::convertScaleAbs(threshold_img, threshold_img);	// convert from 32FC1 to 8UC1
 		cv::distanceTransform(threshold_img, distance_transformed_map, CV_DIST_L2, 5);
 		if (debug_texts) std::cout << "distanceTransform done" << std::endl;
 	}
@@ -658,7 +659,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 
 		// check distance to closest obstacle
 		mira::Pose2 target_pose_in_merged_map;
-		mira::maps::OccupancyGrid merged_map;
+		mira::maps::GridMap<double,1> merged_map;
 		mira::maps::GridMap<float> distance_transformed_map;
 		boost::shared_ptr<mira::RigidTransform2f> odometry_to_map;
 		float obstacle_distance = computeFootprintToObstacleDistance(mira::transform_cast<mira::Pose2>(target_pose), target_pose_in_merged_map, merged_map, distance_transformed_map, odometry_to_map);
