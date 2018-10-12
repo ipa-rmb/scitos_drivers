@@ -56,7 +56,9 @@ void ScitosDrive::initialize() {
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_clean_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/segmentation/Map", &ScitosDrive::map_segmented_data_callback, this);
-  robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this); // todo: obsolete?
+  mira::Channel<mira::maps::GridMap<double,1> > cost_map_channel = robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
+  robot_->getMiraAuthority().bootup("Waiting for data on channel /maps/cost/PlannerMap_FinalCostMap");
+  cost_map_channel.waitForData();
   merged_map_channel_ = robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid >("ObstacleMap");
   computed_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/computed_target_trajectory_monitor", 1);
   commanded_trajectory_pub_ = robot_->getRosNode().advertise<geometry_msgs::TransformStamped>("/room_exploration/coverage_monitor_server/commanded_target_trajectory_monitor", 1);
@@ -492,7 +494,9 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 	// receive the merged map
 	if (merged_map.isEmpty())
 	{
-		merged_map = merged_map_channel_.read(/*mira::Time::now(), mira::Duration::seconds(1)*/)->value().clone(); // todo: enforce current data? need exception handling!
+		//merged_map = merged_map_channel_.read(/*mira::Time::now(), mira::Duration::seconds(1)*/)->value().clone(); // todo: enforce current data? need exception handling!
+		boost::mutex::scoped_lock lock(cost_map_mutex_);
+		merged_map = cost_map_.getMat().clone();
 		if (debug_texts) std::cout << "merged map: " << merged_map.size() << "  "<<  merged_map.getCellSize() << " " <<  merged_map.getOffset() << std::endl;
 	}
 
@@ -665,7 +669,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		const double cost_map_threshold = -1.0;	// deactivates the cost map
 		const double min_obstacle_distance = 0.02;	// in [m]
 //		mira::ChannelRead<mira::maps::OccupancyGrid> merged_map = merged_map_channel_.read(/*mira::Time::now(), mira::Duration::seconds(1)*/); // enforce current data? need exception handling!
-		const double max_track_offset = merged_map.size()[0]/2 * merged_map.getCellSize() * 0.9;		// in [m]
+		const double max_track_offset = 2.0 * 0.9;		// in [m]	// todo: param
 
 //		std::cout << "merged map: " << merged_map->size() << "  "<<  merged_map->getCellSize() << " " <<  merged_map->getOffset() << std::endl;
 //		mira::maps::GridMap<float> distance_transformed_map(merged_map->size(), merged_map->getCellSize(), merged_map->getOffset());
