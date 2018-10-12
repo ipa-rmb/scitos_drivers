@@ -116,6 +116,8 @@ void ScitosDrive::initialize() {
   barrier_status_.barrier_stopped = false;
   barrier_status_.last_detection_stamp = ros::Time(0);
   robot_->registerSpinFunction(boost::bind(&ScitosDrive::publish_barrier_status, this));
+
+  robot_->getMiraAuthority().ok();
 }
 
 // todo: hack just needed by the application
