@@ -994,26 +994,20 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	const double map_resolution = goal->map_resolution;	// in [m/cell]
 	const cv::Point2d map_origin(goal->map_origin.position.x, goal->map_origin.position.y);
 	const double target_wall_distance_px = robot_radius_/map_resolution;	// target distance of robot center to wall todo: check if valid
-	const double target_wall_distance_px_epsilon = 0.1/map_resolution;		// allowed deviated from target distance of robot center to wall, used for sampling goal poses along the wall
+	const double target_wall_distance_px_epsilon = 1;			// allowed deviation from target distance of robot center to wall, used for sampling goal poses along the wall
 
 	// convert the map msg in cv format
 	cv_bridge::CvImagePtr cv_ptr_obj;
 	cv_ptr_obj = cv_bridge::toCvCopy(goal->map, sensor_msgs::image_encodings::MONO8);
 	const cv::Mat map = cv_ptr_obj->image;
-	cv::imshow("map", map);
-	cv::waitKey();
 
 	// convert the area_map msg in cv format
 	cv_ptr_obj = cv_bridge::toCvCopy(goal->area_map, sensor_msgs::image_encodings::MONO8);
 	const cv::Mat area_map = cv_ptr_obj->image;
-	cv::imshow("area_map", area_map);
-	cv::waitKey();
 
 	// convert the coverage_map msg in cv format
 	cv_ptr_obj = cv_bridge::toCvCopy(goal->coverage_map, sensor_msgs::image_encodings::MONO8);
 	const cv::Mat coverage_map = cv_ptr_obj->image;
-	cv::imshow("coverage_map", coverage_map);
-	cv::waitKey();
 
 	// get the distance-transformed map
 	//cv::erode(map, temporary_map, cv::Mat());
@@ -1021,8 +1015,8 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	cv::distanceTransform(area_map, distance_map, CV_DIST_L2, 5);
 	cv::Mat distance_map_disp;
 	cv::convertScaleAbs(distance_map, distance_map_disp);	// conversion to 8 bit image
-	cv::imshow("distance_map_disp", distance_map_disp);
-	cv::waitKey();
+//	cv::imshow("distance_map_disp", distance_map_disp);
+//	cv::waitKey();
 
 //	// reduce the distance transformed map to the current area
 //	for (int v=0; v<distance_map.rows; ++v)
@@ -1037,8 +1031,10 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	cv::Mat level_set_map = cv::Mat::zeros(distance_map.rows, distance_map.cols, CV_8UC1);
 	for (int v=0; v<distance_map.rows; ++v)
 		for (int u=0; u<distance_map.cols; ++u)
-			if (fabs(distance_map.at<double>(v,u)-target_wall_distance_px) < target_wall_distance_px_epsilon)
+			if (fabs(distance_map.at<float>(v,u)-target_wall_distance_px) < target_wall_distance_px_epsilon)
 				level_set_map.at<uchar>(v,u) = 255;
+	cv::imshow("level_set_map", level_set_map);
+	
 
 	// determine a preferred driving direction for each point
 	const double pi = 3.14159265359;
@@ -1134,6 +1130,33 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		level_set_map.at<uchar>(next_pos) = 0;
 		current_pos = next_pos;
 		wall_poses.push_back(cv::Vec3d(current_pos.x*map_resolution+map_origin.x, current_pos.y*map_resolution+map_origin.y, driving_direction.at<float>(current_pos)));
+	}
+
+	// display path
+	std::cout << "printing path" << std::endl;
+	for(size_t step=1; step<wall_poses.size(); ++step)
+	{
+		cv::Mat fov_path_map = area_map.clone();
+		cv::resize(fov_path_map, fov_path_map, cv::Size(), 2, 2, cv::INTER_LINEAR);
+		if (wall_poses.size() > 0)
+			cv::circle(fov_path_map, 2*cv::Point((wall_poses[0].val[0]-map_origin.x)/map_resolution, (wall_poses[0].val[1]-map_origin.y)/map_resolution), 2, cv::Scalar(0.6), CV_FILLED);
+		for(size_t i=1; i<=step; ++i)
+		{
+			cv::Point p1((wall_poses[i-1].val[0]-map_origin.x)/map_resolution, (wall_poses[i-1].val[1]-map_origin.y)/map_resolution);
+			cv::Point p2((wall_poses[i].val[0]-map_origin.x)/map_resolution, (wall_poses[i].val[1]-map_origin.y)/map_resolution);
+			cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.8), CV_FILLED);
+			cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
+			if (i==step)
+			{
+				cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.3), CV_FILLED);
+				cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
+				cv::Point p3(p2.x+5*cos(wall_poses[i].val[2]), p2.y+5*sin(wall_poses[i].val[2]));
+				cv::line(fov_path_map, 2*p2, 2*p3, cv::Scalar(0.2), 1);
+			}
+		}
+		cv::imshow("cell path", fov_path_map);
+		if (step % 100 == 0)
+		cv::waitKey();
 	}
 
 #else
