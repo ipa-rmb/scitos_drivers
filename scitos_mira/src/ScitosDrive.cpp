@@ -53,7 +53,7 @@ void ScitosDrive::initialize() {
   map_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("map_original", 1, true);
   map_clean_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("map", 1, true);	// todo: hack
   map_segmented_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("map_segmented", 1, true);
-  robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
+  mira::Channel<mira::maps::OccupancyGrid> map_channel = robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_clean_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/segmentation/Map", &ScitosDrive::map_segmented_data_callback, this);
   mira::Channel<mira::maps::GridMap<double,1> > cost_map_channel = robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
@@ -67,11 +67,12 @@ void ScitosDrive::initialize() {
   writeParametersToROSParamServer();
 
   if (!footprint_.empty()) {
-	  mira::ChannelRead<mira::maps::OccupancyGrid> merged_map = robot_->getMiraAuthority().waitForData(merged_map_channel_, mira::Duration::seconds(10));
-	  if (!merged_map.isValid())
-		  ROS_ERROR("Cannot read merged map channel '%s'", merged_map_channel_.getID().c_str());
+	  //mira::ChannelRead<mira::maps::OccupancyGrid> merged_map = robot_->getMiraAuthority().waitForData(merged_map_channel_, mira::Duration::seconds(10));
+	  mira::ChannelRead<mira::maps::OccupancyGrid> map = robot_->getMiraAuthority().waitForData(map_channel, mira::Duration::seconds(10));
+	  if (!map.isValid())
+		  ROS_ERROR("Cannot read map channel '%s'", map_channel.getID().c_str());
 	  else
-		  collision_test_.initialize(footprint_, merged_map->getCellSize());
+		  collision_test_.initialize(footprint_, map->getCellSize());
   }
 
   // offered services
@@ -359,6 +360,7 @@ void ScitosDrive::map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid>
 	ROS_INFO("ScitosDrive::map_data_callback: Received map.");
 	map_world_offset_ = cv::Point2d(data->getWorldOffset()[0], data->getWorldOffset()[1]);
 	map_resolution_ = data->getCellSize();
+	map_ = data->value();
 	publish_grid_map(data->value(), map_pub_, map_frame_);
 }
 
@@ -412,6 +414,7 @@ void ScitosDrive::publish_grid_map(const mira::maps::OccupancyGrid& data, const 
 
 void ScitosDrive::cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data)
 {
+	// todo: cost map is never used
 	// store cost map
 	boost::mutex::scoped_lock lock(cost_map_mutex_);
 	cost_map_ = data->clone();
@@ -481,26 +484,45 @@ void ScitosDrive::getCurrentRobotSpeed(double& robot_speed_x, double& robot_spee
 float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_pose)
 {
 	mira::Pose2 target_pose_in_merged_map;
-	mira::maps::GridMap<double,1> merged_map;
+	mira::maps::OccupancyGrid merged_map;
 	mira::maps::GridMap<float> distance_transformed_map;
 	boost::shared_ptr<mira::RigidTransform2f> odometry_to_map;
 	return computeFootprintToObstacleDistance(target_pose, target_pose_in_merged_map, merged_map, distance_transformed_map, odometry_to_map);
 }
 
 float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_pose, mira::Pose2& target_pose_in_merged_map,
-		mira::maps::GridMap<double,1>& merged_map, mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map,
+		mira::maps::OccupancyGrid& merged_map, mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map,
 		bool debug_texts)
 {
 	// compute distance between footprint and closest obstacle
-	debug_texts = true;
 
-	// receive the merged map
+	// convert target_pose into coordinate system of merged map: for local merged_map, the coordinate transform is necessary, otherwise skip
+	// todo: read out frames names for multi level buildings
+	if (!odometry_to_map)
+	{
+		odometry_to_map = boost::make_shared<mira::RigidTransform2f>(robot_->getMiraAuthority().getTransform<mira::RigidTransform2f>("/maps/MapFrame", "/robot/OdometryFrame"));
+	}
+
+	// receive the merged map and merge with map
+	const mira::RigidTransform2f map_to_odometry = odometry_to_map->inverse();
 	if (merged_map.isEmpty())
 	{
-		//merged_map = merged_map_channel_.read(/*mira::Time::now(), mira::Duration::seconds(1)*/)->value().clone(); // todo: enforce current data? need exception handling!
-		boost::mutex::scoped_lock lock(cost_map_mutex_);
-		merged_map = cost_map_.clone();
+		mira::maps::OccupancyGrid merged_map_local = merged_map_channel_.read(/*mira::Time::now(), mira::Duration::seconds(1)*/)->value().clone(); // todo: enforce current data? need exception handling!
 		if (debug_texts) std::cout << "merged map: " << merged_map.size() << "  "<<  merged_map.getCellSize() << " " <<  merged_map.getOffset() << std::endl;
+
+		// add current local dynamic obstacles to global static map
+		merged_map = map_.clone();
+		cv::threshold(merged_map, merged_map, 99, 255, CV_THRESH_BINARY);
+		for (int v=0; v<merged_map_local.height(); ++v)
+		{
+			for (int u=0; u<merged_map_local.width(); ++u)
+			{
+				const mira::Point2f pm_m = merged_map_local.map2world(mira::Point2f(u,v));
+				const mira::Point2f pw_m = map_to_odometry * pm_m;
+				const mira::Point2i pw_px = merged_map.world2map(pw_m);
+				merged_map(pw_px) = std::max(merged_map(pw_px), merged_map_local(u,v));
+			}
+		}
 	}
 
 	// create distance transform on merged map
@@ -510,22 +532,17 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 		if (debug_texts) std::cout << "distance_transformed_map: " << distance_transformed_map.size() << std::endl;
 		// collision_test_.distanceTransform(merged_map, distance_transformed_map);	// throws error, the code of this function is copied here
 		cv::Mat threshold_img;
-		cv::threshold(merged_map, threshold_img, 0.99, 255, CV_THRESH_BINARY_INV);
-		cv::convertScaleAbs(threshold_img, threshold_img);	// convert from 32FC1 to 8UC1
+		cv::threshold(merged_map, threshold_img, 130, 255, CV_THRESH_BINARY_INV);
 		cv::distanceTransform(threshold_img, distance_transformed_map, CV_DIST_L2, 5);
 		if (debug_texts) std::cout << "distanceTransform done" << std::endl;
-		cv::imshow("merged_map", merged_map);
-		cv::imshow("threshold_img", threshold_img);
-		cv::imshow("distance_transformed_map", distance_transformed_map);
-		cv::waitKey();
+//		cv::imshow("merged_map", merged_map);
+//		cv::circle(threshold_img, merged_map.world2map(target_pose.t), 2, cv::Scalar(128), -1);
+//		cv::imshow("threshold_img", threshold_img);
+//		cv::imshow("distance_transformed_map", distance_transformed_map);
+//		cv::waitKey(20);
 	}
 
-	// convert target_pose into coordinate system of merged map
-	// todo: read out frames names for multi level buildings
-	if (!odometry_to_map)
-	{
-		odometry_to_map = boost::make_shared<mira::RigidTransform2f>(robot_->getMiraAuthority().getTransform<mira::RigidTransform2f>("/maps/MapFrame", "/robot/OdometryFrame"));
-	}
+	odometry_to_map = boost::shared_ptr<mira::RigidTransform2f>(new mira::RigidTransform2f(0, 0, 0));	// todo: hack: when working on a global map there is no transform necessary
 	target_pose_in_merged_map = *odometry_to_map * target_pose;
 	if (debug_texts) std::cout << "odometry_to_map : " << *odometry_to_map << std::endl;
 	if (debug_texts) std::cout << "pose : " << target_pose_in_merged_map << std::endl;
@@ -666,7 +683,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 
 		// check distance to closest obstacle
 		mira::Pose2 target_pose_in_merged_map;
-		mira::maps::GridMap<double,1> merged_map;
+		mira::maps::OccupancyGrid merged_map;
 		mira::maps::GridMap<float> distance_transformed_map;
 		boost::shared_ptr<mira::RigidTransform2f> odometry_to_map;
 		float obstacle_distance = computeFootprintToObstacleDistance(mira::transform_cast<mira::Pose2>(target_pose), target_pose_in_merged_map, merged_map, distance_transformed_map, odometry_to_map);
@@ -1039,18 +1056,20 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 //	cv::imshow("distance_map_area_disp", distance_map_disp);
 //	cv::waitKey();
 
+	// todo: remove double width levels sets
+
 	// find the points near walls in the accessible area of the room
 	cv::Mat level_set_map = cv::Mat::zeros(distance_map.rows, distance_map.cols, CV_8UC1);
 	for (int v=0; v<distance_map.rows; ++v)
 		for (int u=0; u<distance_map.cols; ++u)
 			if (fabs(distance_map.at<float>(v,u)-target_wall_distance_px) < target_wall_distance_px_epsilon)
 				level_set_map.at<uchar>(v,u) = 255;
-	cv::imshow("level_set_map", level_set_map);
-	
+//	cv::imshow("level_set_map", level_set_map);
+//	cv::waitKey(20);
 
 	// determine a preferred driving direction for each point
 	const double pi = 3.14159265359;
-	const double direction_offset = -0.5*pi;		// the direction offset is -pi/2 for wall following on the right side and +pi/2 for wall following on the left side
+	const double direction_offset = -0.5*pi;		// todo: param: the direction offset is -pi/2 for wall following on the right side and +pi/2 for wall following on the left side
 	cv::Mat distance_map_dx, distance_map_dy;
 	cv::Sobel(distance_map_disp, distance_map_dx, CV_64F, 1, 0, 3);
 	cv::Sobel(distance_map_disp, distance_map_dy, CV_64F, 0, 1, 3);

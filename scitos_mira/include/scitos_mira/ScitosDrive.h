@@ -104,7 +104,7 @@ private:
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
 	float computeFootprintToObstacleDistance(const mira::Pose2& target_pose);
-	float computeFootprintToObstacleDistance(const mira::Pose2& target_pose, mira::Pose2& target_pose_in_merged_map, mira::maps::GridMap<double,1>& merged_map,
+	float computeFootprintToObstacleDistance(const mira::Pose2& target_pose, mira::Pose2& target_pose_in_merged_map, mira::maps::OccupancyGrid& merged_map,
 			mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map, bool debug_texts=false);
 	int waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold=-1);
 	void publishComputedTarget(const tf::StampedTransform& transform);
@@ -120,6 +120,7 @@ private:
 	mira::RigidTransform3d coverage_offset_;		// the center offset of the area of the coverage device (cleaner, camera, ...) against robot_frame_, in [m]
 	cv::Point2d map_world_offset_;	// in [m]
 	double map_resolution_;		// in [m/cell]
+	mira::maps::OccupancyGrid map_;
 	mira::Channel<mira::maps::OccupancyGrid> merged_map_channel_;
 	mira::Channel<int> application_status_channel_;		// todo: hack: put to separate module
 	ros::Subscriber application_status_sub_;		// todo: hack: put to separate module
