@@ -1240,6 +1240,15 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	const float wall_following_off_traveling_distance_threshold = (goal->wall_following_off_traveling_distance_threshold>=0.f ? goal->wall_following_off_traveling_distance_threshold : 1.0f);		// when traveling farther than this threshold distance, the robot does not use the wall following objective, in [m]
 	for (std::vector<cv::Vec3d>::iterator pose = wall_poses.begin(); pose!=wall_poses.end(); ++pose)
 	{
+		std::cout << "wall_follow_action_server_.isPreemptRequested()=" << wall_follow_action_server_->isPreemptRequested() << std::endl;
+		if (wall_follow_action_server_->isPreemptRequested() == true)
+		{
+			// this sends the response back to the caller
+			WallFollowActionServer::Result res;
+			wall_follow_action_server_->setAborted(res);
+			return;
+		}
+
 		std::cout << "  Next pose: " << pose->val[0] << ", " << pose->val[1] << ", " << pose->val[2] << std::endl;
 
 		// convert target pose to mira::Pose3
