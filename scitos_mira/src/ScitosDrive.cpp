@@ -127,6 +127,7 @@ void ScitosDrive::reflect(Reflector& r)
 {
 	r.method("start_application", &ScitosDrive::startApplication, this, "This method starts the cleaning application.");
 	r.method("start_application_without_cleaning", &ScitosDrive::startApplicationWithoutCleaning, this, "This method starts the cleaning application without using the cleaning device.");
+	r.method("pause_application", &ScitosDrive::pauseApplication, this, "This method pauses the cleaning application.");
 	r.method("stop_application", &ScitosDrive::stopApplication, this, "This method stops the cleaning application.");
 }
 
@@ -164,6 +165,28 @@ int ScitosDrive::startApplicationWithoutCleaning(void)
 	start_application_req.data = 0;
 	ros::service::waitForService(service_name);
 	if (ros::service::call(service_name, start_application_req, start_application_res))
+	{
+		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
+		return 0;
+	}
+	else
+	{
+		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
+		return 1;
+	}
+	return 1;
+}
+
+// todo: hack: put to separate module
+int ScitosDrive::pauseApplication(void)
+{
+	std::string service_name = "set_application_status_application_wet_cleaning";
+	std::cout << ">>>>>>>>>>>>> Pausing application." << std::endl;
+	cob_srvs::SetIntRequest pause_application_req;
+	cob_srvs::SetIntResponse pause_application_res;
+	pause_application_req.data = 2;
+	ros::service::waitForService(service_name);
+	if (ros::service::call(service_name, pause_application_req, pause_application_res))
 	{
 		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
 		return 0;
@@ -463,7 +486,6 @@ void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr&
 
 double ScitosDrive::normalize_angle(double delta_angle)
 {
-	const double pi = 3.14159265359;
 	while (delta_angle < -pi)
 		delta_angle += 2*pi;
 	while (delta_angle > pi)
@@ -652,7 +674,6 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	//const float path_tolerance = (path->path_tolerance>0.f ? path->path_tolerance : 0.1f);
 	float goal_position_tolerance = (path->goal_position_tolerance>0.f ? path->goal_position_tolerance : 0.1f);
 	const float goal_angle_tolerance = (path->goal_angle_tolerance>0.f ? path->goal_angle_tolerance : 0.17f);
-	const double pi = 3.14159265359;
 
 	// convert the area_map msg in cv format
 	cv_bridge::CvImagePtr cv_ptr_obj;
@@ -908,7 +929,6 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 //	const float path_tolerance = (path->path_tolerance>0.f ? path->path_tolerance : 0.1f);
 //	const float goal_position_tolerance = (path->goal_position_tolerance>0.f ? path->goal_position_tolerance : 0.1f);
 //	const float goal_angle_tolerance = (path->goal_angle_tolerance>0.f ? path->goal_angle_tolerance : 0.17f);
-//	const double pi = 3.14159265359;
 //
 //	// visit first pose with normal navigation
 //	for (size_t i=0; i<1/*path->target_poses.size()*/; ++i)
@@ -1056,8 +1076,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 //	cv::imshow("distance_map_area_disp", distance_map_disp);
 //	cv::waitKey();
 
-	// todo: remove double width levels sets
-
 	// find the points near walls in the accessible area of the room
 	cv::Mat level_set_map = cv::Mat::zeros(distance_map.rows, distance_map.cols, CV_8UC1);
 	for (int v=0; v<distance_map.rows; ++v)
@@ -1068,7 +1086,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 //	cv::waitKey(20);
 
 	// determine a preferred driving direction for each point
-	const double pi = 3.14159265359;
 	const double direction_offset = -0.5*pi;		// todo: param: the direction offset is -pi/2 for wall following on the right side and +pi/2 for wall following on the left side
 	cv::Mat distance_map_dx, distance_map_dy;
 	cv::Sobel(distance_map_disp, distance_map_dx, CV_64F, 1, 0, 3);
@@ -1077,7 +1094,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	for (int v=0; v<distance_map.rows; ++v)
 		for (int u=0; u<distance_map.cols; ++u)
 			if (level_set_map.at<uchar>(v,u) == 255)
-				driving_direction.at<float>(v,u) = atan2(distance_map_dy.at<double>(v,u), distance_map_dx.at<double>(v,u)) + direction_offset;
+				driving_direction.at<float>(v,u) = normalize_angle(atan2(distance_map_dy.at<double>(v,u), distance_map_dx.at<double>(v,u)) + direction_offset);
 
 	// find the closest position to the robot pose
 	mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
@@ -1104,6 +1121,8 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	std::vector<cv::Vec3d> wall_poses_dense, wall_poses;
 	wall_poses_dense.push_back(cv::Vec3d(current_pos.x*map_resolution+map_origin.x, current_pos.y*map_resolution+map_origin.y, driving_direction.at<float>(current_pos)));
 	level_set_map.at<uchar>(current_pos) = 0;
+	cv::Mat visited_map = -1e11*cv::Mat::ones(level_set_map.rows, level_set_map.cols, CV_32FC1);	// used to mask all cells in the neighborhood of already visited cells
+	                                                                                                // write driving direction into visited_map and only skip if driving direction is similar
 	while (true)
 	{
 		cv::Point next_pos(-1,-1);
@@ -1160,7 +1179,12 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		// prepare next step
 		level_set_map.at<uchar>(next_pos) = 0;
 		current_pos = next_pos;
-		wall_poses_dense.push_back(cv::Vec3d(current_pos.x*map_resolution+map_origin.x, current_pos.y*map_resolution+map_origin.y, driving_direction.at<float>(current_pos)));
+		if (visited_map.at<float>(next_pos) < -1e10 ||		// do not visit places a second time
+				fabs(normalize_angle(driving_direction.at<float>(next_pos)-visited_map.at<float>(next_pos))) > 100./180.*pi)		// except with very different driving direction
+		{
+			wall_poses_dense.push_back(cv::Vec3d(next_pos.x*map_resolution+map_origin.x, next_pos.y*map_resolution+map_origin.y, driving_direction.at<float>(next_pos)));
+			cv::circle(visited_map, next_pos, 3, cv::Scalar(driving_direction.at<float>(next_pos)), -1);
+		}
 	}
 	// reduce density of wall_poses
 	wall_poses.push_back(wall_poses_dense[0]);
@@ -1253,7 +1277,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
 		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
 
-		// todo: use without wall task on longer distances or on targets in free space far from a wall
+		// use without wall task on longer distances or on targets in free space far from a wall
 		mira::Pose3 current_robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
 		const double distance_to_last_pose_sqr = (pose->val[0]-current_robot_pose.x())*(pose->val[0]-current_robot_pose.x()) + (pose->val[1]-current_robot_pose.y())*(pose->val[1]-current_robot_pose.y());
 		if (distance_to_last_pose_sqr <= wall_following_off_traveling_distance_threshold*wall_following_off_traveling_distance_threshold &&
@@ -1379,7 +1403,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 ////	cv::waitKey(10);
 //
 //	// determine a preferred driving direction for each point
-//	const double pi = 3.14159265359;
 //	const double direction_offset = 0.5*pi;		// the direction offset is +pi/2 for wall following on the right side and -pi/2 for wall following on the left side
 //	cv::Mat cost_map_dx, cost_map_dy;
 //	cv::Sobel(cost_map, cost_map_dx, CV_64F, 1, 0, 3);

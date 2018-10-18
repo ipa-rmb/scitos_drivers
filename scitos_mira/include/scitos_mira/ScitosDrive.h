@@ -71,6 +71,7 @@ public:
 	template <typename Reflector> void reflect(Reflector& r);
 	int startApplication(void);
 	int startApplicationWithoutCleaning(void);
+	int pauseApplication(void);
 	int stopApplication(void);
 	void application_status_callback(const std_msgs::Int32::ConstPtr& msg);
 
@@ -126,6 +127,8 @@ private:
 	ros::Subscriber application_status_sub_;		// todo: hack: put to separate module
 	mira::Footprint footprint_;
 	mira::model::CollisionTest collision_test_;
+
+	const double pi = 3.14159265359;
 #endif
 
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
