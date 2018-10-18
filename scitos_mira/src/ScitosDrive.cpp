@@ -184,7 +184,7 @@ int ScitosDrive::pauseApplication(void)
 	std::cout << ">>>>>>>>>>>>> Pausing application." << std::endl;
 	cob_srvs::SetIntRequest pause_application_req;
 	cob_srvs::SetIntResponse pause_application_res;
-	pause_application_req.data = 2;
+	pause_application_req.data = 1;
 	ros::service::waitForService(service_name);
 	if (ros::service::call(service_name, pause_application_req, pause_application_res))
 	{
