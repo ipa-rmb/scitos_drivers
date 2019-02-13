@@ -1,10 +1,10 @@
-
 message(STATUS "Detecting MIRA root directory")
 
 # Examines each path in MIRA_PATH in order to find the MIRA root directory, which
 # is identified by the file "make/Insource.make"
-
+message("MIRA_PATH=$ENV{MIRA_PATH}")
 SET(ENV{MIRA_PATH} "$ENV{MIRA_PATH}:/opt/mira-scitos:${CMAKE_SOURCE_DIR}")
+message("MIRA_PATH=$ENV{MIRA_PATH}")
 
 SET(FORCE_USE_QT4 1)
 
@@ -45,11 +45,28 @@ ENDIF()
 
 set(CMAKE_MODULE_PATH ${MIRA_ROOT_DIR}/make)
 
+include(GlobalConfig)
 include(Prerequisites)
 include(Dependencies)
 
 # Require MIRAFramework package
 mira_require_package(MIRAFramework)
+
+mira_optional_package(Navigation)
+MIRA_FIND_PACKAGE(Navigation)
+message("-- PACKAGE_Navigation_FOUND = ${PACKAGE_Navigation_FOUND}")
+
+mira_optional_package(Mapping)
+MIRA_FIND_PACKAGE(Mapping)
+message("-- PACKAGE_Mapping_FOUND = ${PACKAGE_Mapping_FOUND}")
+
+mira_optional_package(PilotSmoothTransition)
+MIRA_FIND_PACKAGE(PilotSmoothTransition)
+message("-- PACKAGE_PilotSmoothTransition_FOUND = ${PACKAGE_PilotSmoothTransition_FOUND}")
+
+mira_optional_package(PilotWallDistance)
+MIRA_FIND_PACKAGE(PilotWallDistance)
+message("-- PACKAGE_PilotWallDistance_FOUND = ${PACKAGE_PilotWallDistance_FOUND}")
 
 ##############################################################################
 
@@ -57,7 +74,11 @@ MACRO(catkin_add_mira target)
 # MIRA uses C++0x features
 set_target_properties(${target} PROPERTIES COMPILE_FLAGS -std=c++0x)
 # For transitive linking link against all auto liked libraries
-target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework)
+if(${PACKAGE_Navigation_FOUND} AND ${PACKAGE_Mapping_FOUND})
+	target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework Navigation Mapping UnitPilot_SmoothTransition UnitPilot_WallDistanceObjective)
+else(${PACKAGE_Navigation_FOUND} AND ${PACKAGE_Mapping_FOUND})
+	target_link_libraries(${target} ${MIRAAutoLinkLibraries} MIRAFramework)
+endif(${PACKAGE_Navigation_FOUND} AND ${PACKAGE_Mapping_FOUND})
 ENDMACRO()
 
 

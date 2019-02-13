@@ -8,12 +8,13 @@
 	<arg name="BARRIER_ENABLED" default="true"/>
 
 	<!-- Remote Launching -->
-    <arg name="machine" default="localhost"/>
-    <arg name="user" default="" />
+	<arg name="machine" default="localhost"/>
+	<arg name="user" default="" />
+	<arg name="scitos_node_args" default="-k127.0.0.1:1234"/>
 
-    <machine name="$(arg machine)" address="$(arg machine)" env-loader="$(optenv ROS_ENV_LOADER )" user="$(arg user)" default="true" />
+	<machine name="$(arg machine)" address="$(arg machine)" env-loader="$(optenv ROS_ENV_LOADER )" user="$(arg user)" default="true" />
 
-	<node pkg="scitos_mira" type="scitos_node" name="scitos_node" output="screen" respawn="true">
+	<node pkg="scitos_mira" type="scitos_node" name="scitos_node" output="screen" respawn="true" args="$(arg scitos_node_args)">
 		<param name="config_file" value="$(arg SCITOS_CONFIG)" type="string"/>
 		<param name="scitos_modules" value="$(arg SCITOS_MODULES)" />
 		<param name="magnetic_barrier_enabled" value="$(arg BARRIER_ENABLED)" />
