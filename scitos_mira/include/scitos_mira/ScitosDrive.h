@@ -48,9 +48,13 @@
 #include <navigation/tasks/PathFollowTask.h>
 #include <maps/OccupancyGrid.h> //# MIRA occupancy grid map
 #include <geometry_msgs/TransformStamped.h>
+#include <sensor_msgs/PointCloud2.h>
 #include <tf/tf.h>
 #include <cv_bridge/cv_bridge.h>
 #include <angles/angles.h>
+#include <serialization/adapters/pcl/point_types.h>
+#include <serialization/adapters/pcl/point_cloud.h>
+#include <pcl_conversions/pcl_conversions.h>
 #endif
 
 #include <boost/thread/mutex.hpp>
@@ -101,6 +105,7 @@ private:
 	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void map_clean_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void map_segmented_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
+	void camera1_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB>> data);
 	void publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
@@ -116,6 +121,7 @@ private:
 	std::string map_clean_frame_;		// name of the map-clean coordinate system
 	std::string map_segmented_frame_;	// name of the map-segmented coordinate system
 	std::string robot_frame_;		// name of the robot base frame
+        std::string camera1_frame_;             // name of the camera1 coordinate system
 	double robot_radius_;		// the radius of the inner circle of the bounding box of the robot footprint, in [m]
 	double coverage_radius_;		// the radius of the area of the coverage device (cleaner, camera, ...), in [m]
 	mira::RigidTransform3d coverage_offset_;		// the center offset of the area of the coverage device (cleaner, camera, ...) against robot_frame_, in [m]
@@ -148,13 +154,15 @@ private:
 	ros::Publisher map_pub_;
 	ros::Publisher map_clean_pub_;
 	ros::Publisher map_segmented_pub_;
+	ros::Publisher camera1_pcl_pub;
 	ros::Publisher odometry_pub_;
 	ros::Publisher bumper_pub_;
 	ros::Publisher mileage_pub_;
 	ros::Publisher motorstatus_pub_;
 	ros::Publisher rfid_pub_;
-    ros::Publisher magnetic_barrier_pub_;
-    ros::Publisher emergency_stop_pub_;
+	ros::Publisher magnetic_barrier_pub_;
+	ros::Publisher emergency_stop_pub_;
+	ros::Publisher camera1_pcl_pub_;
 
 	ros::ServiceServer reset_motor_stop_service_;
 	ros::ServiceServer reset_odometry_service_;
