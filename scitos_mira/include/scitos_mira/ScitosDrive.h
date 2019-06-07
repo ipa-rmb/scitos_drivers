@@ -47,6 +47,8 @@
 #include <navigation/tasks/PreferredDirectionTask.h>
 #include <navigation/tasks/PathFollowTask.h>
 #include <maps/OccupancyGrid.h> //# MIRA occupancy grid map
+#include <maps/PointCloud.h> // used to display custom detections
+#include <geometry/Point.h> // used to display custom detections
 #include <geometry_msgs/TransformStamped.h>
 #include <tf/tf.h>
 #include <cv_bridge/cv_bridge.h>
@@ -93,6 +95,8 @@ public:
 	bool enable_rfid(scitos_msgs::EnableRfid::Request  &req, scitos_msgs::EnableRfid::Response &res);
 	bool reset_barrier_stop(scitos_msgs::ResetBarrierStop::Request  &req, scitos_msgs::ResetBarrierStop::Response &res);
 	void publish_barrier_status();
+
+	void publish_detections();
 private:
 	ScitosDrive();
 
@@ -107,7 +111,7 @@ private:
 	float computeFootprintToObstacleDistance(const mira::Pose2& target_pose);
 	float computeFootprintToObstacleDistance(const mira::Pose2& target_pose, mira::Pose2& target_pose_in_merged_map, mira::maps::OccupancyGrid& merged_map,
 			mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map, bool debug_texts=false);
-	int waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold=-1);
+	int waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold=-1, const bool path_request=false);
 	void publishComputedTarget(const tf::StampedTransform& transform);
 	void publishCommandedTarget(const tf::StampedTransform& transform);
 	ros::Publisher computed_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
@@ -123,6 +127,7 @@ private:
 	double map_resolution_;		// in [m/cell]
 	mira::maps::OccupancyGrid map_;
 	mira::Channel<mira::maps::OccupancyGrid> merged_map_channel_;
+	mira::Channel<mira::maps::PointCloud<mira::Point2f>> detections_channel_; // todo: hack: put to separate module
 	mira::Channel<int> application_status_channel_;		// todo: hack: put to separate module
 	ros::Subscriber application_status_sub_;		// todo: hack: put to separate module
 	mira::Footprint footprint_;
