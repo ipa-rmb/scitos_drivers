@@ -415,7 +415,7 @@ void ScitosDrive::camera1_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pc
 {
 	ros::Time cam_pcl_time = ros::Time::now();
 	// convert point cloud to ROS format
-	ROS_INFO("ScitosDrive::camera1_pcl_data_callback: Received camera1_pcl.");
+	//ROS_INFO("ScitosDrive::camera1_pcl_data_callback: Received camera1_pcl.");
 	sensor_msgs::PointCloud2 camera_pcl;
 	pcl::toROSMsg(data->value(), camera_pcl);
 	camera_pcl.header.stamp = cam_pcl_time;
