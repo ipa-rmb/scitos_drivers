@@ -344,28 +344,35 @@ void ScitosDrive::odometry_data_callback(mira::ChannelRead<mira::robot::Odometry
 void ScitosDrive::writeParametersToROSParamServer()
 {
 	// read in robot radius, coverage radius, and coverage area center offset against robot base link
-	mira::RPCFuture<mira::robot::RobotModelPtr> r = robot_->getMiraAuthority().callService<mira::robot::RobotModelPtr>("/robot/Robot", "getRobotModel");
-	bool success = r.timedWait(mira::Duration::seconds(10));
-	std::cout << "########## Robot Configuration ##########" << std::endl;
-	robot_radius_ = 0.325;	// todo:
-	coverage_radius_ = 0.25;
-	coverage_offset_ = mira::RigidTransform3d(0.29, -0.114, 0.0, 0.0, 0.0, 0.0);
-	if (success==true)
+	try
 	{
-		mira::robot::RobotModelPtr robot_model = r.get();
-		if (robot_model)
+		mira::RPCFuture<mira::robot::RobotModelPtr> r = robot_->getMiraAuthority().callService<mira::robot::RobotModelPtr>("/robot/Robot", "getRobotModel");
+		bool success = r.timedWait(mira::Duration::seconds(10));
+		std::cout << "########## Robot Configuration ##########" << std::endl;
+		robot_radius_ = 0.325;	// todo:
+		coverage_radius_ = 0.25;
+		coverage_offset_ = mira::RigidTransform3d(0.29, -0.114, 0.0, 0.0, 0.0, 0.0);
+		if (success==true)
 		{
-			footprint_ = robot_model->getFootprint();
-			robot_radius_ = footprint_.getInnerRadius();
-			mira::Footprint coverage_footprint = robot_model->getFootprint("", mira::Time::now(), "CleaningTool");
-			coverage_radius_ = 0.5*(coverage_footprint.getOuterRadius()-coverage_footprint.getInnerRadius());	// todo: hack: only works for circle footprints
-			coverage_offset_ = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/modules/brushcleaning/BrushFrame", "/robot/RobotFrame");
+			mira::robot::RobotModelPtr robot_model = r.get();
+			if (robot_model)
+			{
+				footprint_ = robot_model->getFootprint();
+				robot_radius_ = footprint_.getInnerRadius();
+				mira::Footprint coverage_footprint = robot_model->getFootprint("", mira::Time::now(), "CleaningTool");
+				coverage_radius_ = 0.5*(coverage_footprint.getOuterRadius()-coverage_footprint.getInnerRadius());	// todo: hack: only works for circle footprints
+				coverage_offset_ = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/modules/brushcleaning/BrushFrame", "/robot/RobotFrame");
+			}
+			else
+				std::cout << "Error: could not read robot parameters. Taking standard values." << std::endl;
 		}
 		else
 			std::cout << "Error: could not read robot parameters. Taking standard values." << std::endl;
 	}
-	else
-		std::cout << "Error: could not read robot parameters. Taking standard values." << std::endl;
+	catch (std::exception& error)
+	{
+		std::cout << error.what() << std::endl;
+	}
 	std::cout << "robot_radius=" << robot_radius_ << "   coverage_radius=" << coverage_radius_ << "   coverage_offset=(" << coverage_offset_.x() << ", " << coverage_offset_.y() << ")\n" << std::endl;
 
 	// write parameters to ROS parameter server
