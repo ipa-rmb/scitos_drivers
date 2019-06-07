@@ -52,12 +52,15 @@ void ScitosDrive::initialize() {
   // maps
   map_frame_ = "map";
   robot_frame_ = "base_link";
+  camera1_frame_ = "camera1_optical_frame";
   map_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("map_original", 1, true);
   map_clean_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("map", 1, true);	// todo: hack
   map_segmented_pub_ = robot_->getRosNode().advertise<nav_msgs::OccupancyGrid>("map_segmented", 1, true);
+  camera1_pcl_pub_ = robot_->getRosNode().advertise<sensor_msgs::PointCloud2>("camera1_pcl", 1, true);
   mira::Channel<mira::maps::OccupancyGrid> map_channel = robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_clean_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/segmentation/Map", &ScitosDrive::map_segmented_data_callback, this);
+  robot_->getMiraAuthority().subscribe<pcl::PointCloud<pcl::PointXYZRGB> >("/robot/depthCam1/pcl/PCLOut", &ScitosDrive::camera1_pcl_data_callback, this);
   mira::Channel<mira::maps::GridMap<double,1> > cost_map_channel = robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
   robot_->getMiraAuthority().bootup("Waiting for data on channel /maps/cost/PlannerMap_FinalCostMap");
   cost_map_channel.waitForData();
@@ -363,28 +366,35 @@ void ScitosDrive::odometry_data_callback(mira::ChannelRead<mira::robot::Odometry
 void ScitosDrive::writeParametersToROSParamServer()
 {
 	// read in robot radius, coverage radius, and coverage area center offset against robot base link
-	mira::RPCFuture<mira::robot::RobotModelPtr> r = robot_->getMiraAuthority().callService<mira::robot::RobotModelPtr>("/robot/Robot", "getRobotModel");
-	bool success = r.timedWait(mira::Duration::seconds(10));
-	std::cout << "########## Robot Configuration ##########" << std::endl;
-	robot_radius_ = 0.325;	// todo:
-	coverage_radius_ = 0.25;
-	coverage_offset_ = mira::RigidTransform3d(0.29, -0.114, 0.0, 0.0, 0.0, 0.0);
-	if (success==true)
+	try
 	{
-		mira::robot::RobotModelPtr robot_model = r.get();
-		if (robot_model)
+		mira::RPCFuture<mira::robot::RobotModelPtr> r = robot_->getMiraAuthority().callService<mira::robot::RobotModelPtr>("/robot/Robot", "getRobotModel");
+		bool success = r.timedWait(mira::Duration::seconds(10));
+		std::cout << "########## Robot Configuration ##########" << std::endl;
+		robot_radius_ = 0.325;	// todo:
+		coverage_radius_ = 0.25;
+		coverage_offset_ = mira::RigidTransform3d(0.29, -0.114, 0.0, 0.0, 0.0, 0.0);
+		if (success==true)
 		{
-			footprint_ = robot_model->getFootprint();
-			robot_radius_ = footprint_.getInnerRadius();
-			mira::Footprint coverage_footprint = robot_model->getFootprint("", mira::Time::now(), "CleaningTool");
-			coverage_radius_ = 0.5*(coverage_footprint.getOuterRadius()-coverage_footprint.getInnerRadius());	// todo: hack: only works for circle footprints
-			coverage_offset_ = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/modules/brushcleaning/BrushFrame", "/robot/RobotFrame");
+			mira::robot::RobotModelPtr robot_model = r.get();
+			if (robot_model)
+			{
+				footprint_ = robot_model->getFootprint();
+				robot_radius_ = footprint_.getInnerRadius();
+				mira::Footprint coverage_footprint = robot_model->getFootprint("", mira::Time::now(), "CleaningTool");
+				coverage_radius_ = 0.5*(coverage_footprint.getOuterRadius()-coverage_footprint.getInnerRadius());	// todo: hack: only works for circle footprints
+				coverage_offset_ = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/modules/brushcleaning/BrushFrame", "/robot/RobotFrame");
+			}
+			else
+				std::cout << "Error: could not read robot parameters. Taking standard values." << std::endl;
 		}
 		else
 			std::cout << "Error: could not read robot parameters. Taking standard values." << std::endl;
 	}
-	else
-		std::cout << "Error: could not read robot parameters. Taking standard values." << std::endl;
+	catch (std::exception& error)
+	{
+		std::cout << error.what() << std::endl;
+	}
 	std::cout << "robot_radius=" << robot_radius_ << "   coverage_radius=" << coverage_radius_ << "   coverage_offset=(" << coverage_offset_.x() << ", " << coverage_offset_.y() << ")\n" << std::endl;
 
 	// write parameters to ROS parameter server
@@ -418,6 +428,29 @@ void ScitosDrive::map_segmented_data_callback(mira::ChannelRead<mira::maps::Occu
 	// convert map to ROS format
 	ROS_INFO("ScitosDrive::map_segmented_data_callback: Received map_segmented.");
 	publish_grid_map(data->value(), map_segmented_pub_, map_frame_);
+}
+
+void ScitosDrive::camera1_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB>> data)
+{
+	ros::Time cam_pcl_time = ros::Time::now();
+	// convert point cloud to ROS format
+	//ROS_INFO("ScitosDrive::camera1_pcl_data_callback: Received camera1_pcl.");
+	sensor_msgs::PointCloud2 camera_pcl;
+	pcl::toROSMsg(data->value(), camera_pcl);
+	camera_pcl.header.stamp = cam_pcl_time;
+	camera_pcl.header.frame_id = camera1_frame_;
+	camera1_pcl_pub_.publish(camera_pcl);
+
+	// publish localization if available
+	geometry_msgs::TransformStamped localization_tf;
+	localization_tf.header.stamp = cam_pcl_time;
+	localization_tf.header.frame_id = robot_frame_;
+	localization_tf.child_frame_id = camera1_frame_;
+	//mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
+	mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/depthCam1/PrimeSenseFrame", "/robot/RobotFrame");
+	tf::transformEigenToMsg(map_to_odometry, localization_tf.transform);
+	// send the transform
+	robot_->getTFBroadcaster().sendTransform(localization_tf);
 }
 
 void ScitosDrive::publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id)
