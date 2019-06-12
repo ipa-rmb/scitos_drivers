@@ -32,7 +32,6 @@
 #include <scitos_msgs/MoveBaseWallFollowAction.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <nav_msgs/Odometry.h>
-#include <std_msgs/Int32.h>
 
 #include <model/CollisionTest.h>
 
@@ -48,9 +47,6 @@
 #include <navigation/tasks/PathFollowTask.h>
 #include <maps/OccupancyGrid.h> //# MIRA occupancy grid map
 #include <geometry/Point.h> // used to display custom detections
-#include <maps/PointCloud.h> // used to display custom detections
-#include <maps/PointCloudTypes.h>
-#include <cob_object_detection_msgs/DetectionArray.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <tf/tf.h>
@@ -76,13 +72,6 @@ public:
 
 	void initialize();
 
-	template <typename Reflector> void reflect(Reflector& r);
-	int startApplication(void);
-	int startApplicationWithoutCleaning(void);
-	int pauseApplication(void);
-	int stopApplication(void);
-	void application_status_callback(const std_msgs::Int32::ConstPtr& msg);
-
 	void velocity_command_callback(const geometry_msgs::Twist::ConstPtr& msg);
 
 	void odometry_data_callback(mira::ChannelRead<mira::robot::Odometry2> data);
@@ -102,7 +91,6 @@ public:
 	bool reset_barrier_stop(scitos_msgs::ResetBarrierStop::Request  &req, scitos_msgs::ResetBarrierStop::Response &res);
 	void publish_barrier_status();
 
-	void publish_detections(const cob_object_detection_msgs::DetectionArray::ConstPtr& object_detection_msg);
 private:
 	ScitosDrive();
 
@@ -135,11 +123,6 @@ private:
 	double map_resolution_;		// in [m/cell]
 	mira::maps::OccupancyGrid map_;
 	mira::Channel<mira::maps::OccupancyGrid> merged_map_channel_;
-	mira::Channel<mira::maps::PointCloud2> detections_channel_; // todo: hack: put to separate module
-	mira::Channel<int> application_status_channel_;		// todo: hack: put to separate module
-	ros::Subscriber application_status_sub_;		// todo: hack: put to separate module
-	ros::Subscriber dirt_detections_sub_;
-	ros::Subscriber trash_detections_sub_;
 	mira::Footprint footprint_;
 	mira::model::CollisionTest collision_test_;
 
