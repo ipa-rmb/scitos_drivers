@@ -112,7 +112,7 @@ private:
 	mira::Pose3 getRobotPose() const;
 	double computeEuclideanDistanceToGoal(const mira::Pose3& pose_a, const mira::Pose3& pose_b) const;
 	void stopRobotAtCurrentPosition();
-	TargetCode setTaskAndWaitForTarget(const mira::Pose3 target, const float position_tolerance, const float angle_tolerance, bool path_request);
+	TargetCode setTaskAndWaitForTarget(const mira::Pose3 target, const float position_accuracy, const float position_tolerance, const float angle_accuracy, const float angle_tolerance, bool path_request, const float cost_map_threshold);
 	TargetCode waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold=-1, const bool path_request=false);
 
 	void publishComputedTarget(const tf::StampedTransform& transform);
@@ -140,6 +140,7 @@ private:
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
 	void move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal);
 
+	bool computeAlternativeTargetIfNeeded(const mira::Pose2 &target_pose, const double next_x, const double next_y, const double min_obstacle_distance, const cv::Mat& area_map);
 	boost::shared_ptr<PathActionServer> path_action_server_; ///< Action server which accepts requests for a path to follow
 	void path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
 
