@@ -3,15 +3,15 @@
 #include "scitos_mira/ScitosG5.h"
 
 #include <cob_srvs/SetInt.h>
+#include <iostream>
 
-ScitosApplication::ScitosApplication() : ScitosModule(std::string ("Application"))
+ScitosApplication::ScitosApplication() : ScitosModule(std::string ("Application")), status_service_name_("set_application_status_application_wet_cleaning")
 {
 
 }
 
 void ScitosApplication::initialize()
 {
-
 	// offered services
 	robot_->getMiraAuthority().publishService(*this);
 
@@ -34,94 +34,48 @@ void ScitosApplication::reflect(Reflector& r)
 	r.method("stop_application", &ScitosApplication::stopApplication, this, "This method stops the cleaning application.");
 }
 
-// todo: later we should pass a parameter for the service_name of the respective application that shall be started
-int ScitosApplication::startApplication(void)
+int ScitosApplication::changeApplicationStatus(APPLICATION_STATUS status) const
 {
-	std::string service_name = "set_application_status_application_wet_cleaning";
-	std::cout << ">>>>>>>>>>>>> Starting application." << std::endl;
-	robot_->getRosNode().setParam("use_cleaning_device", true);
-	cob_srvs::SetIntRequest start_application_req;
-	cob_srvs::SetIntResponse start_application_res;
-	start_application_req.data = 0;
-	ros::service::waitForService(service_name);
-	if (ros::service::call(service_name, start_application_req, start_application_res))
-	{
-		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
-		return 0;
-	}
-	else
-	{
-		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
+	std::cout << ">> Changing application status to " << status << std::endl;
+	cob_srvs::SetIntRequest request;
+	cob_srvs::SetIntResponse response;
+	request.data = status;
+	ros::service::waitForService(status_service_name_);
+	if (!ros::service::call(status_service_name_, request, response)) {
+		std::cout << ">>>> Service call to " << status_service_name_ << " failed" << std::endl;
 		return 1;
 	}
-	return 1;
+
+	return 0;
+}
+
+int ScitosApplication::startApplication(void)
+{
+	const int result = changeApplicationStatus(APPLICATION_START);
+	if (result == 0)
+		robot_->getRosNode().setParam("use_cleaning_device", true);
+	return result;
 }
 
 
 int ScitosApplication::startApplicationWithoutCleaning(void)
 {
-	std::string service_name = "set_application_status_application_wet_cleaning";
-	std::cout << ">>>>>>>>>>>>> Starting application without cleaner." << std::endl;
-	robot_->getRosNode().setParam("use_cleaning_device", false);
-	cob_srvs::SetIntRequest start_application_req;
-	cob_srvs::SetIntResponse start_application_res;
-	start_application_req.data = 0;
-	ros::service::waitForService(service_name);
-	if (ros::service::call(service_name, start_application_req, start_application_res))
-	{
-		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
-		return 0;
-	}
-	else
-	{
-		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
-		return 1;
-	}
-	return 1;
+	const int result = changeApplicationStatus(APPLICATION_START);
+	if (result == 0)
+		robot_->getRosNode().setParam("use_cleaning_device", false);
+	return result;
 }
 
 
 int ScitosApplication::stopApplication(void)
 {
-	std::string service_name = "set_application_status_application_wet_cleaning";
-	std::cout << ">>>>>>>>>>>>> Stopping application." << std::endl;
-	cob_srvs::SetIntRequest stop_application_req;
-	cob_srvs::SetIntResponse stop_application_res;
-	stop_application_req.data = 2;
-	ros::service::waitForService(service_name);
-	if (ros::service::call(service_name, stop_application_req, stop_application_res))
-	{
-		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
-		return 0;
-	}
-	else
-	{
-		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
-		return 1;
-	}
-	return 1;
+	return changeApplicationStatus(APPLICATION_STOP);
 }
 
 
 int ScitosApplication::pauseApplication(void)
 {
-	std::string service_name = "set_application_status_application_wet_cleaning";
-	std::cout << ">>>>>>>>>>>>> Pausing application." << std::endl;
-	cob_srvs::SetIntRequest pause_application_req;
-	cob_srvs::SetIntResponse pause_application_res;
-	pause_application_req.data = 1;
-	ros::service::waitForService(service_name);
-	if (ros::service::call(service_name, pause_application_req, pause_application_res))
-	{
-		std::cout << "Service call to '" << service_name << "' was successful." << std::endl;
-		return 0;
-	}
-	else
-	{
-		std::cout << "Service call to '" << service_name << "' was not successful." << std::endl;
-		return 1;
-	}
-	return 1;
+	return changeApplicationStatus(APPLICATION_PAUSE);
 }
 
 
@@ -139,12 +93,25 @@ void ScitosApplication::publish_detections(const cob_object_detection_msgs::Dete
 	mira::ChannelWrite<mira::maps::PointCloud2> w = detections_channel_.write();
 	w->value().clear();
 	w->timestamp = mira::Time::now(); // optional
-	std::cout << "detections size " << object_detection_msg->detections.size() << std::endl;
 	for (size_t k = 0; k < object_detection_msg->detections.size(); ++k)
 	{
 		const cob_object_detection_msgs::Detection& detection = object_detection_msg->detections[k];
-		std::cout << "detection on (" << detection.pose.pose.position.x << ", " << detection.pose.pose.position.y << ")" << std::endl;
 		w->value().push_back(mira::Point2f(detection.pose.pose.position.x, detection.pose.pose.position.y));
 	}
 	w.finish();
+}
+
+std::ostream& operator<<(std::ostream &o,APPLICATION_STATUS status)
+{
+	switch(status)
+	{
+		case APPLICATION_START:
+			return o << "STARTING APPLICATION";
+		case APPLICATION_STOP:
+			return o << "STOPPING APPLICATION";
+		case APPLICATION_PAUSE:
+			return o << "PAUSING APPLICATION";
+		default:
+			return o << "(invalid value for application_status)";
+	}
 }
