@@ -368,47 +368,43 @@ void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string>
 	nav_pilot_event_status_ = data->value();
 }
 
-void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal)
+// TODO (rmb-ma). Remove the path_request boolean (used for preempted requests)
+TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, const float position_tolerance, const float angle_tolerance, bool path_request)
 {
-#ifdef __WITH_PILOT__
-	Eigen::Affine3d goal_pose;
-	tf::poseMsgToEigen(goal->target_pose.pose, goal_pose);
-	Eigen::Vector3d euler_angles = goal_pose.rotation().eulerAngles(2,1,0);	// computes yaw, pitch, roll angles from rotation matrix
-
 	mira::navigation::TaskPtr task(new mira::navigation::Task());
-	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(goal->target_pose.pose.position.x, goal->target_pose.pose.position.y), 0.1f, 0.1f)));
-	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(euler_angles(0), 0.1)));
+	mira::Point2f target2f(target.x(), target.y());
+	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(target2f, position_tolerance, position_tolerance)));
+	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target.yaw(), angle_tolerance)));
 	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 1.0f)));
 
-	// Set this as our goal. Will cause the robot to start driving.
 	mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
 	r.wait();
 
-	// wait until arrived at target
-	mira::Pose3 target_pose(Eigen::Vector3f(goal->target_pose.pose.position.x, goal->target_pose.pose.position.y, goal->target_pose.pose.position.z),
-					Eigen::Quaternionf(goal->target_pose.pose.orientation.w, goal->target_pose.pose.orientation.x, goal->target_pose.pose.orientation.y, goal->target_pose.pose.orientation.z));
-	unsigned int return_code = waitForTargetApproach(target_pose, 0.05, 1., 0., false); // TODO (rmb-ma) 0.25 - 3.14 0
-
-	// on robot_freeze try move command again with driving backwards allowed
-	if (return_code == 3)
-	{
-		std::cout << "############################ Cannot drive to goal, trying with driving backwards allowed now." << std::endl;
+	TargetCode return_code = waitForTargetApproach(target, position_tolerance, angle_tolerance, 0., path_request);
+	if (return_code == TARGET_ROBOT_DOES_NOT_MOVE) {
 		task->getSubTask<mira::navigation::PreferredDirectionTask>()->direction = mira::navigation::PreferredDirectionTask::BOTH;
-		//task->getSubTask<mira::navigation::PreferredDirectionTask>()->wrongDirectionCost = 0.5f;
-		robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task).get();
-		return_code = waitForTargetApproach(target_pose, 0.05, 1., 0., false); // wait until close to target
+		robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
+		return_code = waitForTargetApproach(target, position_tolerance, angle_tolerance, 0., path_request);
 	}
+	return return_code;
+}
 
-	std::cout << "Stopping move_base_action_server with status " << return_code << std::endl;
+// todo (rmb-ma). change the message to add the tolerance (at least the angle tolerance)
+void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal)
+{
+#ifdef __WITH_PILOT__
+	mira::Pose3 target_pose(Eigen::Vector3f(goal->target_pose.pose.position.x, goal->target_pose.pose.position.y, goal->target_pose.pose.position.z),
+						Eigen::Quaternionf(goal->target_pose.pose.orientation.w, goal->target_pose.pose.orientation.x, goal->target_pose.pose.orientation.y, goal->target_pose.pose.orientation.z));
+
+	const float angle_tolerance = pi/4;
+	const float position_tolerance = 0.05;
+	const TargetCode return_code = setTaskAndWaitForTarget(target_pose, position_tolerance, angle_tolerance, false);
+
 	MoveBaseActionServer::Result res;
-	if (return_code == 0 || return_code == 2) // todo (rmb-ma). Why return_code == 2 ?
-	{
+	if (return_code == TARGET_GOAL_REACHED || return_code == TARGET_PILOT_NOT_IN_PLAN_AND_DRIVE_MODE) // todo (rmb-ma). Why return_code == 2 ?
 		move_base_action_server_->setSucceeded(res);
-	}
 	else
-	{
 		move_base_action_server_->setAborted(res, "move_base_callback returned with status " + return_code);
-	}
 #else
 	ROS_ERROR("ScitosDrive::move_base_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
 
@@ -656,7 +652,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	// convert the area_map msg in cv format
 	cv_bridge::CvImagePtr cv_ptr_obj;
 	cv_ptr_obj = cv_bridge::toCvCopy(path->area_map, sensor_msgs::image_encodings::MONO8);
-	const cv::Mat f = cv_ptr_obj->image;
+	const cv::Mat area_map = cv_ptr_obj->image;
 
 	// follow path
 	for (size_t i=0; i<path->target_poses.size(); ++i)

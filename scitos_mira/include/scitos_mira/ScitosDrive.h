@@ -112,6 +112,7 @@ private:
 	mira::Pose3 getRobotPose() const;
 	double computeEuclideanDistanceToGoal(const mira::Pose3& pose_a, const mira::Pose3& pose_b) const;
 	void stopRobotAtCurrentPosition();
+	TargetCode setTaskAndWaitForTarget(const mira::Pose3 target, const float position_tolerance, const float angle_tolerance, bool path_request);
 	TargetCode waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold=-1, const bool path_request=false);
 
 	void publishComputedTarget(const tf::StampedTransform& transform);
