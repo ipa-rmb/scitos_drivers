@@ -1,5 +1,6 @@
 
 #include "scitos_mira/ScitosApplication.h"
+#include "scitos_mira/ScitosG5.h"
 
 #include <cob_srvs/SetInt.h>
 

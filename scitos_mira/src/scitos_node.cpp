@@ -6,7 +6,6 @@
 #include <boost/thread.hpp>
 #include <boost/algorithm/string.hpp>
 
-
 #include <string>
 #include <vector>
 
