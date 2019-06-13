@@ -4,7 +4,7 @@
 
 #include <transform/RigidTransform.h>
 #include <geometry_msgs/Quaternion.h>
-#include <geometry_msgs/Pose.h>;
+#include <geometry_msgs/Pose.h>
 
 #include <tf/transform_broadcaster.h>
 #include <eigen_conversions/eigen_msg.h>
@@ -606,49 +606,40 @@ void ScitosDrive::publishCommandedTarget(const tf::StampedTransform& transform)
 }
 #endif
 
-mira::Pose2 computeLeftCandidate(const mira::Pose2 &target_pose_in_merged_map, const double offset, cv::Point2d direction_left, const mira::maps::OccupancyGrid &merged_map,
+mira::Pose2 ScitosDrive::computeLeftCandidate(const mira::Pose2 &target_pose_in_merged_map, const double offset, cv::Point2d direction_left,
+		const mira::maps::OccupancyGrid &merged_map,
 		const mira::RigidTransform2f &map_to_odometry, const cv::Point2d &map_world_offset_, double map_resolution_,
-		const double min_obstacle_distance, const cv::Mat &area_map, const mira::model::CollisionTest &collision_test,
-		const mira::maps::GridMap<float> &distance_transformed_map, bool &found)
+		const double min_obstacle_distance, const cv::Mat &area_map,
+		const mira::maps::GridMap<float> &distance_transformed_map, bool &found) const
 {
-	mira::Pose2 pose_right_in_merged_map(target_pose_in_merged_map.x()+offset*direction_left.x, target_pose_in_merged_map.y()+offset*direction_left.y, target_pose_in_merged_map.phi());
-	mira::Point2i target_position_pixel = merged_map.world2map(pose_right_in_merged_map.t);
-	float obstacle_distance = collision_test.distanceToObstacle(distance_transformed_map, target_position_pixel, target_pose_in_merged_map.phi()) * merged_map.getCellSize(); // in [m]
-	mira::Pose2 target_pose_candidate = map_to_odometry * pose_right_in_merged_map;
-
-	//std::cout << "left candidate (" << target_pose_candidate.x() << ", " << target_pose_candidate.y() << ") - " << obstacle_distance << " >= ? " << min_obstacle_distance << std::endl;
-
+	mira::Pose2 pose_left_in_merged_map(target_pose_in_merged_map.x()+offset*direction_left.x, target_pose_in_merged_map.y()+offset*direction_left.y, target_pose_in_merged_map.phi());
+	mira::Point2i target_position_pixel = merged_map.world2map(pose_left_in_merged_map.t);
+	float obstacle_distance = collision_test_.distanceToObstacle(distance_transformed_map, target_position_pixel, target_pose_in_merged_map.phi()) * merged_map.getCellSize(); // in [m]
+	mira::Pose2 target_pose_candidate = map_to_odometry * pose_left_in_merged_map;
 	cv::Point map_coordinates = cv::Point((target_pose_candidate.x()+map_world_offset_.x)/map_resolution_, (target_pose_candidate.y()+map_world_offset_.y)/map_resolution_);
 
 	found = obstacle_distance >= min_obstacle_distance && area_map.at<uchar>(map_coordinates)==255;
 	return target_pose_candidate;
 }
 
-mira::Pose2 computeRightCandidate(const mira::Pose2 &target_pose_in_merged_map, const double offset, cv::Point2d direction_left, const mira::maps::OccupancyGrid &merged_map,
+// TODO (rmb-ma) warning. Check that it's working
+mira::Pose2 ScitosDrive::computeRightCandidate(const mira::Pose2 &target_pose_in_merged_map, const double offset, cv::Point2d direction_left,
+		const mira::maps::OccupancyGrid &merged_map,
 		const mira::RigidTransform2f &map_to_odometry, const cv::Point2d &map_world_offset_, double map_resolution_,
-		const double min_obstacle_distance, const cv::Mat &area_map, const mira::model::CollisionTest &collision_test,
-		const mira::maps::GridMap<float> &distance_transformed_map, bool &found)
+		const double min_obstacle_distance, const cv::Mat &area_map,
+		const mira::maps::GridMap<float> &distance_transformed_map, bool &found) const
 {
-	mira::Pose2 pose_right_in_merged_map(target_pose_in_merged_map.x()-offset*direction_left.x, target_pose_in_merged_map.y()-offset*direction_left.y, target_pose_in_merged_map.phi());
-	mira::Point2i target_position_pixel = merged_map.world2map(pose_right_in_merged_map.t);
-	float obstacle_distance = collision_test.distanceToObstacle(distance_transformed_map, target_position_pixel, target_pose_in_merged_map.phi()) * merged_map.getCellSize(); // in [m]
-	mira::Pose2 target_pose_candidate = map_to_odometry * pose_right_in_merged_map;
-
-
-	//std::cout << "right candidate (" << target_pose_candidate.x() << ", " << target_pose_candidate.y() << ") - " << obstacle_distance << " >= ? " << min_obstacle_distance << std::endl;
-	cv::Point map_coordinates = cv::Point((target_pose_candidate.x()+map_world_offset_.x)/map_resolution_, (target_pose_candidate.y()+map_world_offset_.y)/map_resolution_);
-
-	found = obstacle_distance >= min_obstacle_distance && area_map.at<uchar>(map_coordinates)==255;
-	return target_pose_candidate;
+	return computeLeftCandidate(target_pose_in_merged_map, -offset, direction_left, merged_map, map_to_odometry, map_world_offset_, map_resolution_, min_obstacle_distance,
+			area_map, distance_transformed_map, found);
 }
 
-bool ScitosDrive::computeAlternativeTargetIfNeeded(const mira::Pose2 &target_pose, const double next_x, const double next_y, const double min_obstacle_distance, const cv::Mat& area_map)
+bool ScitosDrive::computeAlternativeTargetIfNeeded(mira::Pose3 &target_pose, const double next_x, const double next_y, const double min_obstacle_distance, const cv::Mat& area_map)
 {
 	mira::Pose2 target_pose_in_merged_map;
 	mira::maps::OccupancyGrid merged_map;
 	mira::maps::GridMap<float> distance_transformed_map;
 	boost::shared_ptr<mira::RigidTransform2f> odometry_to_map;
-	float obstacle_distance = computeFootprintToObstacleDistance(target_pose, target_pose_in_merged_map, merged_map, distance_transformed_map, odometry_to_map);
+	float obstacle_distance = computeFootprintToObstacleDistance(mira::transform_cast<mira::Pose2>(target_pose), target_pose_in_merged_map, merged_map, distance_transformed_map, odometry_to_map);
 
 	if (obstacle_distance >= min_obstacle_distance) return true;
 
@@ -666,46 +657,30 @@ bool ScitosDrive::computeAlternativeTargetIfNeeded(const mira::Pose2 &target_pos
 		const double x = target_pose.x();
 		const double y = target_pose.y();
 
+		bool found_left;
+		mira::Pose2 target_left_candidate = computeLeftCandidate(target_pose_in_merged_map, offset, direction_left, merged_map, map_to_odometry, map_world_offset_, map_resolution_,
+							min_obstacle_distance, area_map, distance_transformed_map, found_left);
+
+		bool found_right;
+		mira::Pose2 target_right_candidate = computeRightCandidate(target_pose_in_merged_map, offset, direction_left, merged_map, map_to_odometry, map_world_offset_, map_resolution_,
+							min_obstacle_distance, area_map, distance_transformed_map, found_right);
+
+		if (!found_left && !found_right) continue;
+
 		// use of determinant between vectors target_pose and next_pose
-		if (x*next_y - y*next_x < 0) // right
+		if (x*next_y - y*next_x < 0) // left
 		{
-			mira::Pose2 target_left_candidate = computeLeftCandidate(target_pose_in_merged_map, offset, direction_left, merged_map, map_to_odometry, map_world_offset_, map_resolution_,
-					min_obstacle_distance, area_map, collision_test_, distance_transformed_map, found);
-
-			if (found) {
+			if (found_left)
 				target_pose = mira::transform_cast<mira::Pose3>(target_left_candidate);
-				std::cout << "  -> Alternative target LEFT (" << target_pose.x() << ", " << target_pose.y() << "),   distance: " << obstacle_distance << "    found." << std::endl;
-				break;
-			}
-
-			mira::Pose2 target_right_candidate = computeRightCandidate(target_pose_in_merged_map, offset, direction_left, merged_map, map_to_odometry, map_world_offset_, map_resolution_,
-					min_obstacle_distance, area_map, collision_test_, distance_transformed_map, found);
-
-			if (found) {
+			else
 				target_pose = mira::transform_cast<mira::Pose3>(target_right_candidate);
-				std::cout << "  -> Alternative target RIGHT (" << target_pose.x() << ", " << target_pose.y() << "),   distance: " << obstacle_distance << "    found." << std::endl;
-				break;
-			}
 		}
 		else
 		{
-			mira::Pose2 target_right_candidate = computeRightCandidate(target_pose_in_merged_map, offset, direction_left, merged_map, map_to_odometry, map_world_offset_, map_resolution_,
-					min_obstacle_distance, area_map, collision_test_, distance_transformed_map, found);
-
-			if (found) {
+			if (found_right)
 				target_pose = mira::transform_cast<mira::Pose3>(target_right_candidate);
-				std::cout << "  -> Alternative target RIGHT (" << target_pose.x() << ", " << target_pose.y() << "),   distance: " << obstacle_distance << "    found." << std::endl;
-				break;
-			}
-
-			mira::Pose2 target_left_candidate = computeLeftCandidate(target_pose_in_merged_map, offset, direction_left, merged_map, map_to_odometry, map_world_offset_, map_resolution_,
-				min_obstacle_distance, area_map, collision_test_, distance_transformed_map, found);
-
-			if (found) {
+			else
 				target_pose = mira::transform_cast<mira::Pose3>(target_left_candidate);
-				std::cout << "  -> Alternative target LEFT (" << target_pose.x() << ", " << target_pose.y() << "),   distance: " << obstacle_distance << "    found." << std::endl;
-				break;
-			}
 		}
 	}
 	return found;
@@ -731,42 +706,34 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	cv_ptr_obj = cv_bridge::toCvCopy(path->area_map, sensor_msgs::image_encodings::MONO8);
 	const cv::Mat area_map = cv_ptr_obj->image;
 
-	// follow path
 	for (size_t i=0; i<path->target_poses.size(); ++i)
 	{
 		mira::Time start_time = mira::Time::now();
 
 		if (path_action_server_->isPreemptRequested())
 		{
-			// this sends the response back to the caller
 			PathActionServer::Result res;
 			res.last_visited_index = i;
 			path_action_server_->setAborted(res);
 			return;
 		}
+
 		const geometry_msgs::Pose pose_ros = path->target_poses[i].pose;
 
 		// convert target pose to mira::Pose3
-		mira::Pose3 target_pose(Eigen::Vector3f(pose_ros.position.x, pose_ros.position.y, pose_ros.position.z),
+		mira::Pose3 target_pose3(Eigen::Vector3f(pose_ros.position.x, pose_ros.position.y, pose_ros.position.z),
 				Eigen::Quaternionf(pose_ros.orientation.w, pose_ros.orientation.x, pose_ros.orientation.y, pose_ros.orientation.z));
 
 		// publish computed next target
 		publishComputedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(pose_ros.orientation.x, pose_ros.orientation.y, pose_ros.orientation.z, pose_ros.orientation.w),
 				tf::Vector3(pose_ros.position.x, pose_ros.position.y, pose_ros.position.z)), ros::Time::now(), map_frame_, robot_frame_));
 
-		// check distance to closest obstacle
-
-
-		// check whether the next target pose is accessible (i.e. cost_map < 0.89) and shift occluded targets into accessible space
-		// now uses the exact footprint for collision checking
-		//const double cost_map_threshold = 0.45;	// this is an obstacle distance of inner_circle_radius + 0.1 (min_dist=0.90) + 0.5 (max_dist=0.00) //0.89;
 		const double cost_map_threshold = -1.0;	// deactivates the cost map
 		const double min_obstacle_distance = 0.02;	// in [m]
-//		mira::ChannelRead<mira::maps::OccupancyGrid> merged_map = merged_map_channel_.read(/*mira::Time::now(), mira::Duration::seconds(1)*/); // enforce current data? need exception handling!
-
+		// in order to see if the robot will turn on the left or on the right
 		const double next_x = i < path->target_poses.size() - 1 ? path->target_poses[i+1].pose.position.x : 0;
 		const double next_y = i < path->target_poses.size() - 1 ? path->target_poses[i+1].pose.position.y : 0;
-		bool found = computeAlternativeTargetIfNeeded(target_pose, next_x, next_y, min_obstacle_distance, area_map);
+		bool found = computeAlternativeTargetIfNeeded(target_pose3, next_x, next_y, min_obstacle_distance, area_map);
 
 		if (!found)
 		{
@@ -775,24 +742,21 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		}
 
 		// publish commanded next target
-		publishCommandedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(target_pose.r.x(), target_pose.r.y(), target_pose.r.z(), target_pose.r.w()), tf::Vector3(target_pose.x(), target_pose.y(), target_pose.z())), ros::Time::now(), map_frame_, robot_frame_));
+		publishCommandedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(target_pose3.r.x(), target_pose3.r.y(), target_pose3.r.z(), target_pose3.r.w()), tf::Vector3(target_pose3.x(), target_pose3.y(), target_pose3.z())), ros::Time::now(), map_frame_, robot_frame_));
 
 		// get current robot speed
 		double robot_speed_x = 0.; // [m/s]
 		double robot_speed_theta = 0.;	// [rad/s]
 		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
 
-
 		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
 		const double max_speed_x = 0.6;//in [m/s] 0.6 todo rmb-ma as attribute
-		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed_x-fabs(robot_speed_x))/max_speed_x;	// only takes effect if the robot ever reaches the goal exactly instead of being commanded to the next goal already
-		// 0.05
+		const double goal_accuracy = 0.05 + 0.2 * std::max(0., max_speed_x-fabs(robot_speed_x))/max_speed_x;	// only takes effect if the robot ever reaches the goal exactly instead of being commanded to the next goal already
 		// todo: if there is a big distance between two successive goal positions, decrease the goal tolerance
 		goal_position_tolerance = 0.4 + robot_speed_x * desired_planning_ahead_time;
 
 		const double angle_accuracy = 0.087;
-		setTaskAndWaitForTarget(target_pose, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, true, cost_map_threshold);
-
+		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, true, cost_map_threshold);
 	}
 
 	std::cout << "  Path following successfully terminated." << std::endl;

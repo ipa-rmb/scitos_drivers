@@ -12,7 +12,7 @@
 
 #include <geometry_msgs/Twist.h>
 #include <robot/Odometry.h> //# MIRA odometry
-#include <robot/RobotModel.h> //# MIRA robot model Package(RobotDataTypes)
+#include <robot/RobotModel.h> //# MIRA robot modeltarget_pose Package(RobotDataTypes)
 #include "scitos_mira/ScitosModule.h"
 #include <std_msgs/Bool.h>
 #include <scitos_msgs/ResetMotorStop.h>
@@ -140,7 +140,16 @@ private:
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
 	void move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal);
 
-	bool computeAlternativeTargetIfNeeded(const mira::Pose2 &target_pose, const double next_x, const double next_y, const double min_obstacle_distance, const cv::Mat& area_map);
+	mira::Pose2 computeRightCandidate(const mira::Pose2 &target_pose_in_merged_map, const double offset, cv::Point2d direction_left, const mira::maps::OccupancyGrid &merged_map,
+			const mira::RigidTransform2f &map_to_odometry, const cv::Point2d &map_world_offset_, double map_resolution_,
+			const double min_obstacle_distance, const cv::Mat &area_map,
+			const mira::maps::GridMap<float> &distance_transformed_map, bool &found) const;
+	mira::Pose2 computeLeftCandidate(const mira::Pose2 &target_pose_in_merged_map, const double offset, cv::Point2d direction_left, const mira::maps::OccupancyGrid &merged_map,
+			const mira::RigidTransform2f &map_to_odometry, const cv::Point2d &map_world_offset_, double map_resolution_,
+			const double min_obstacle_distance, const cv::Mat &area_map,
+			const mira::maps::GridMap<float> &distance_transformed_map, bool &found) const;
+
+	bool computeAlternativeTargetIfNeeded(mira::Pose3 &target_pose, const double next_x, const double next_y, const double min_obstacle_distance, const cv::Mat& area_map);
 	boost::shared_ptr<PathActionServer> path_action_server_; ///< Action server which accepts requests for a path to follow
 	void path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
 
