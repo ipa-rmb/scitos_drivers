@@ -64,6 +64,8 @@ typedef actionlib::SimpleActionServer<move_base_msgs::MoveBaseAction> MoveBaseAc
 typedef actionlib::SimpleActionServer<scitos_msgs::MoveBasePathAction> PathActionServer;
 typedef actionlib::SimpleActionServer<scitos_msgs::MoveBaseWallFollowAction> WallFollowActionServer;
 
+enum TargetCode { TARGET_GOAL_REACHED = 0, TARGET_INACESSIBLE = 1, TARGET_PILOT_NOT_IN_PLAN_AND_DRIVE_MODE = 2, TARGET_ROBOT_DOES_NOT_MOVE = 3};
+
 class ScitosDrive: public ScitosModule {
 public:
 	static ScitosModule*  Create() {
@@ -106,7 +108,12 @@ private:
 	float computeFootprintToObstacleDistance(const mira::Pose2& target_pose);
 	float computeFootprintToObstacleDistance(const mira::Pose2& target_pose, mira::Pose2& target_pose_in_merged_map, mira::maps::OccupancyGrid& merged_map,
 			mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map, bool debug_texts=false);
-	int waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold=-1, const bool path_request=false);
+
+	mira::Pose3 getRobotPose() const;
+	double computeEuclideanDistanceToGoal(const mira::Pose3& pose_a, const mira::Pose3& pose_b) const;
+	void stopRobotAtCurrentPosition();
+	TargetCode waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold=-1, const bool path_request=false);
+
 	void publishComputedTarget(const tf::StampedTransform& transform);
 	void publishCommandedTarget(const tf::StampedTransform& transform);
 	ros::Publisher computed_trajectory_pub_;		// publishes the commanded targets for the robot trajectory

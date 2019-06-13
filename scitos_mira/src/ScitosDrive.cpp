@@ -511,84 +511,79 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 	return obstacle_distance;
 }
 
-
-int ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold, const bool path_request)
+void ScitosDrive::stopRobotAtCurrentPosition()
 {
-	int return_code = 0;	// 0=goal reached, 1=target inaccessible, 2=pilot not in PlanAndDrive mode, 3=robot does not move
-//	cv::Point target_position_pixel(-1,-1);
-//	if (cost_map_threshold >= 0)
-//	{
-//		boost::mutex::scoped_lock lock(cost_map_mutex_);
-//		if (cost_map_.getMat().empty() != true)
-//			target_position_pixel = cv::Point(target_pose.x()+cost_map_.getWorldOffset()[0]/cost_map_.getCellSize(), target_pose.y()+cost_map_.getWorldOffset()[1]/cost_map_.getCellSize());
-//	}
-	double robot_freeze_timeout = -1.;	// [s]
+	mira::navigation::TaskPtr stopTask(new mira::navigation::Task());
+	mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+
+	// Task with big tolerance (360deg and 2 meters);
+	const float position_tolerance = 0.4f; // todo (rmb-ma) get the size of the robot / link with the speed
+	stopTask->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(robot_pose.x(), robot_pose.y()), position_tolerance, position_tolerance)));
+	stopTask->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(robot_pose.yaw(), 2*pi)));
+	const float wrong_direction_weight = 0.5f;
+	stopTask->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, wrong_direction_weight)));
+	robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", stopTask);
+}
+
+mira::Pose3 ScitosDrive::getRobotPose() const
+{
+	// todo: instead of "/maps/MapFrame" use the frame of the PositionTask (provide PositionTask to this function) for multi level buildings with multiple maps
+	return robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
+}
+
+double ScitosDrive::computeEuclideanDistanceToGoal(const mira::Pose3& pose_a, const mira::Pose3& pose_b) const
+{
+	const float dx = pose_a.x() - pose_b.x();
+	const float dy = pose_a.y() - pose_b.y();
+	return sqrt(dx*dx + dy*dy);
+}
+
+TargetCode ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold, const bool path_request)
+{
+	const double freeze_offset = 2.f; // [s]
+	const double freeze_min_speed = 0.2f;
+	double robot_freeze_timeout = freeze_offset + computeEuclideanDistanceToGoal(target_pose, getRobotPose());
+
 	ros::Time last_robot_movement = ros::Time::now();
 	while (true)
 	{
+		// todo (rmb-ma). see how to refactor this request
 		if ((path_request && path_action_server_->isPreemptRequested()) || (!path_request && move_base_action_server_->isPreemptRequested()))
 		{
-			mira::navigation::TaskPtr stopTask(new mira::navigation::Task());
-			mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
-
-			stopTask->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(robot_pose.x(), robot_pose.y()), 0.1f, 0.1f)));
-			stopTask->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(robot_pose.yaw(), 0.4)));
-			stopTask->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 1.0f)));
-
-			// Set this as our goal. Will cause the robot to start driving.
-			mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", stopTask);
-			return 1;
+			stopRobotAtCurrentPosition();
+			return TARGET_GOAL_REACHED;
 		}
 
-		// check if the target pose is still accessible
-		bool target_inaccessible = false;
-//		if (cost_map_threshold >= 0 && target_position_pixel.x==-1 && target_position_pixel.y==-1)
-//		{
-//			boost::mutex::scoped_lock lock(cost_map_mutex_);
-//			const cv::Mat& cost_map = cost_map_.getMat();
-//			if (cost_map.empty()==false && cost_map.at<double>(target_position_pixel) >= cost_map_threshold)
-//				target_inaccessible = true;
-//		}
-		if (computeFootprintToObstacleDistance(mira::transform_cast<mira::Pose2>(target_pose)) <= 0.f)
-			target_inaccessible = true;
+		bool target_inaccessible = computeFootprintToObstacleDistance(mira::transform_cast<mira::Pose2>(target_pose)) <= 0.f;
 
-		// todo: instead of "/maps/MapFrame" use the frame of the PositionTask (provide PositionTask to this function) for multi level buildings with multiple maps
-		mira::Pose3 robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
-		const double distance_to_goal = sqrt((target_pose.x()-robot_pose.x())*(target_pose.x()-robot_pose.x()) + (target_pose.y()-robot_pose.y())*(target_pose.y()-robot_pose.y()));
-		const double delta_angle = normalize_angle(target_pose.yaw()-robot_pose.yaw());
-		//std::cout << "      - current robot pose: " << robot_pose.t(0) << ", " << robot_pose.t(1) << ", " << robot_pose.yaw() << "    dist=" << distance_to_goal << "     phi=" << delta_angle << std::endl;
-
-		// flexible timeout on movements based on distance to goal, separate timeout function
-		if (robot_freeze_timeout < 0.)
-			robot_freeze_timeout = 2. + 0.2*distance_to_goal;
+		const mira::Pose3 robot_pose = getRobotPose();
+		const double distance_to_goal = computeEuclideanDistanceToGoal(target_pose, robot_pose);
+		const double delta_angle = normalize_angle(target_pose.yaw() - robot_pose.yaw());
 
 		// also abort if the robot does not move for a long time
 		double robot_speed_x = 0.; // [m/s]
 		double robot_speed_theta = 0.;	// [rad/s]
 		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
+
 		if (fabs(robot_speed_x) > 0.02 || fabs(robot_speed_theta) > 0.04)
 			last_robot_movement = ros::Time::now();
-		// todo: check for non-moving condition (robot location)
-		double robot_freeze_time = (ros::Time::now()-last_robot_movement).toSec();
-		//std::cout << "robot_freeze_time" << robot_freeze_time << std::endl;
+
+		double robot_freeze_time = (ros::Time::now() - last_robot_movement).toSec();
+
 		boost::mutex::scoped_lock lock(nav_pilot_event_status_mutex_);
 
-		if (target_inaccessible || nav_pilot_event_status_.compare("PlanAndDrive") != 0 ||
-				(distance_to_goal < goal_position_tolerance && fabs(delta_angle) < goal_angle_tolerance) ||
-				(robot_freeze_time > robot_freeze_timeout))
-		{
-			if (target_inaccessible)
-				return_code = 1;
-			if (nav_pilot_event_status_.compare("PlanAndDrive") != 0)
-				return_code = 2;
-			if (robot_freeze_time > robot_freeze_timeout)
-				return_code = 3;
-			break;
-		}
+		if (distance_to_goal < goal_position_tolerance && fabs(delta_angle) < goal_angle_tolerance)
+			return TARGET_GOAL_REACHED;
+		if (target_inaccessible)
+			return TARGET_INACESSIBLE;
+		if (nav_pilot_event_status_.compare("PlanAndDrive") != 0)
+			return TARGET_PILOT_NOT_IN_PLAN_AND_DRIVE_MODE;
+		if (robot_freeze_time > robot_freeze_timeout)
+			return TARGET_ROBOT_DOES_NOT_MOVE;
+
 		ros::spinOnce();
 	}
-
-	return return_code;
+	return TARGET_GOAL_REACHED;
 }
 
 void ScitosDrive::publishComputedTarget(const tf::StampedTransform& transform)
@@ -601,7 +596,6 @@ void ScitosDrive::publishComputedTarget(const tf::StampedTransform& transform)
 
 void ScitosDrive::publishCommandedTarget(const tf::StampedTransform& transform)
 {
-	// publish commanded next target
 	geometry_msgs::TransformStamped transform_msg;
 	tf::transformStampedTFToMsg(transform, transform_msg);
 	commanded_trajectory_pub_.publish(transform_msg);
@@ -656,21 +650,19 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 
 	const double desired_planning_ahead_time = 0.4;	// used for computing goal_position_tolerance, in [s]
 
-	//const float path_tolerance = (path->path_tolerance>0.f ? path->path_tolerance : 0.1f);
-	float goal_position_tolerance = (path->goal_position_tolerance>0.f ? path->goal_position_tolerance : 0.1f);
-	const float goal_angle_tolerance = (path->goal_angle_tolerance>0.f ? path->goal_angle_tolerance : 0.17f);
+	float goal_position_tolerance = (path->goal_position_tolerance > 0.f ? path->goal_position_tolerance : 0.1f);
+	const float goal_angle_tolerance = (path->goal_angle_tolerance > 0.f ? path->goal_angle_tolerance : 0.17f);
 
 	// convert the area_map msg in cv format
 	cv_bridge::CvImagePtr cv_ptr_obj;
 	cv_ptr_obj = cv_bridge::toCvCopy(path->area_map, sensor_msgs::image_encodings::MONO8);
-	const cv::Mat area_map = cv_ptr_obj->image;
+	const cv::Mat f = cv_ptr_obj->image;
 
 	// follow path
 	for (size_t i=0; i<path->target_poses.size(); ++i)
 	{
 		mira::Time start_time = mira::Time::now();
 
-		//std::cout << "path_action_server_.isPreemptRequested()=" << path_action_server_->isPreemptRequested() << std::endl;
 		if (path_action_server_->isPreemptRequested())
 		{
 			// this sends the response back to the caller
@@ -684,8 +676,6 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		// convert target pose to mira::Pose3
 		mira::Pose3 target_pose(Eigen::Vector3f(path->target_poses[i].pose.position.x, path->target_poses[i].pose.position.y, path->target_poses[i].pose.position.z),
 				Eigen::Quaternionf(path->target_poses[i].pose.orientation.w, path->target_poses[i].pose.orientation.x, path->target_poses[i].pose.orientation.y, path->target_poses[i].pose.orientation.z));
-		std::cout << "------------------------------------------------------------------------------------------------------------------\n  Next pose: " << target_pose.x() << ", " << target_pose.y() << ", " << target_pose.yaw() << std::endl;
-
 
 		// publish computed next target
 		publishComputedTarget(tf::StampedTransform(tf::Transform(
