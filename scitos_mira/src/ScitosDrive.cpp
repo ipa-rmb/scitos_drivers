@@ -842,6 +842,36 @@ cv::Vec3d mapPosToWallGoal(const cv::Mat& driving_direction, const cv::Point& ma
 	return cv::Vec3d(map_pos.x*map_resolution + map_origin.x, map_pos.y*map_resolution + map_origin.y, driving_direction.at<float>(map_pos));
 }
 
+void ScitosDrive::displayWallFollowerPath(const std::vector<cv::Vec3d>& wall_poses, const cv::Mat& area_map, double map_resolution, const cv::Point& map_origin) const
+{
+	for(size_t step=wall_poses.size()-1; step<wall_poses.size(); ++step)
+	{
+		cv::Mat fov_path_map = area_map.clone();
+		cv::resize(fov_path_map, fov_path_map, cv::Size(), 2, 2, cv::INTER_LINEAR);
+		if (wall_poses.size() > 0)
+			cv::circle(fov_path_map, 2*cv::Point((wall_poses[0].val[0]-map_origin.x)/map_resolution, (wall_poses[0].val[1]-map_origin.y)/map_resolution), 2, cv::Scalar(0.6), CV_FILLED);
+		for(size_t i=1; i<=step; ++i)
+		{
+			cv::Point p1((wall_poses[i-1].val[0]-map_origin.x)/map_resolution, (wall_poses[i-1].val[1]-map_origin.y)/map_resolution);
+			cv::Point p2((wall_poses[i].val[0]-map_origin.x)/map_resolution, (wall_poses[i].val[1]-map_origin.y)/map_resolution);
+			cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.8), CV_FILLED);
+			cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
+			if (i==step)
+			{
+				cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.3), CV_FILLED);
+				cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
+				cv::Point p3(p2.x+5*cos(wall_poses[i].val[2]), p2.y+5*sin(wall_poses[i].val[2]));
+				cv::line(fov_path_map, 2*p2, 2*p3, cv::Scalar(0.2), 1);
+			}
+		}
+		if (step == wall_poses.size()-1)
+		{
+			cv::imshow("cell path", fov_path_map);
+			cv::waitKey(20);
+		}
+	}
+}
+
 void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoalConstPtr& goal, std::vector<cv::Vec3d>& wall_poses_dense) const
 {
 	const double map_resolution = goal->map_resolution;	// in [m/cell]
@@ -922,9 +952,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 #ifdef __WITH_PILOT__
 	ROS_INFO("ScitosDrive::wall_follow_callback: Driving along a wall.");
 
-	const double map_resolution = goal->map_resolution;	// in [m/cell]
-	const cv::Point2d map_origin(goal->map_origin.position.x, goal->map_origin.position.y);
-
 	// collect the wall following path
 	std::vector<cv::Vec3d> wall_poses_dense;
 	computeWallPosesDense(goal, wall_poses_dense);
@@ -951,36 +978,11 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		}
 	}
 
-	// display path
 	if (false)
 	{
-		std::cout << "printing path" << std::endl;
-		for(size_t step=wall_poses.size()-1; step<wall_poses.size(); ++step)
-		{
-			cv::Mat fov_path_map; map_msgToCvFormat(goal->area_map, fov_path_map);
-			cv::resize(fov_path_map, fov_path_map, cv::Size(), 2, 2, cv::INTER_LINEAR);
-			if (wall_poses.size() > 0)
-				cv::circle(fov_path_map, 2*cv::Point((wall_poses[0].val[0]-map_origin.x)/map_resolution, (wall_poses[0].val[1]-map_origin.y)/map_resolution), 2, cv::Scalar(0.6), CV_FILLED);
-			for(size_t i=1; i<=step; ++i)
-			{
-				cv::Point p1((wall_poses[i-1].val[0]-map_origin.x)/map_resolution, (wall_poses[i-1].val[1]-map_origin.y)/map_resolution);
-				cv::Point p2((wall_poses[i].val[0]-map_origin.x)/map_resolution, (wall_poses[i].val[1]-map_origin.y)/map_resolution);
-				cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.8), CV_FILLED);
-				cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
-				if (i==step)
-				{
-					cv::circle(fov_path_map, 2*p2, 2, cv::Scalar(0.3), CV_FILLED);
-					cv::line(fov_path_map, 2*p1, 2*p2, cv::Scalar(0.6), 1);
-					cv::Point p3(p2.x+5*cos(wall_poses[i].val[2]), p2.y+5*sin(wall_poses[i].val[2]));
-					cv::line(fov_path_map, 2*p2, 2*p3, cv::Scalar(0.2), 1);
-				}
-			}
-			if (step == wall_poses.size()-1)
-			{
-				cv::imshow("cell path", fov_path_map);
-				cv::waitKey(20);
-			}
-		}
+		const cv::Point2d map_origin(goal->map_origin.position.x, goal->map_origin.position.y);
+		cv::Mat area_map; map_msgToCvFormat(goal->area_map, area_map);
+		displayWallFollowerPath(wall_poses, area_map, goal->map_resolution, map_origin);
 	}
 
 	// move through the wall poses
@@ -993,12 +995,14 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	const float wall_following_off_traveling_distance_threshold = goal->wall_following_off_traveling_distance_threshold >= 0.f ?
 			goal->wall_following_off_traveling_distance_threshold :
 			1.0f;
+	const double cost_map_threshold = -1.;
+
 	for (std::vector<cv::Vec3d>::iterator pose = wall_poses.begin(); pose!=wall_poses.end(); ++pose)
 	{
-		std::cout << "wall_follow_action_server_.isPreemptRequested()=" << wall_follow_action_server_->isPreemptRequested() << std::endl;
+		// todo handle wall_follow_action_server is preempt requested in the waitForTargetApproach
+
 		if (wall_follow_action_server_->isPreemptRequested())
 		{
-			// this sends the response back to the caller
 			WallFollowActionServer::Result res;
 			wall_follow_action_server_->setAborted(res);
 			return;
@@ -1006,68 +1010,26 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 
 		std::cout << "  Next pose: " << pose->val[0] << ", " << pose->val[1] << ", " << pose->val[2] << std::endl;
 
-		// convert target pose to mira::Pose3
-		mira::Pose3 target_pose(pose->val[0], pose->val[1], 0., pose->val[2], 0., 0.);
+		mira::Pose3 target_pose3(pose->val[0], pose->val[1], 0., pose->val[2], 0., 0.);
+		publishComputedTarget(tf::StampedTransform(tf::Transform(
+				tf::Quaternion(target_pose3.r.x(), target_pose3.r.y(), target_pose3.r.z(), target_pose3.r.w()),
+				tf::Vector3(target_pose3.x(), target_pose3.y(), target_pose3.z())), ros::Time::now(), map_frame_, robot_frame_));
+		publishCommandedTarget(tf::StampedTransform(tf::Transform(
+				tf::Quaternion(target_pose3.r.x(), target_pose3.r.y(), target_pose3.r.z(), target_pose3.r.w()),
+				tf::Vector3(target_pose3.x(), target_pose3.y(), target_pose3.z())), ros::Time::now(), map_frame_, robot_frame_));
 
-		// publish computed next target
-		//Eigen::Quaternion q = mira::quaternionFromYawPitchRoll(pose->val[2], 0., 0.);
-		publishComputedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(target_pose.r.x(), target_pose.r.y(), target_pose.r.z(), target_pose.r.w()), tf::Vector3(target_pose.x(), target_pose.y(), target_pose.z())), ros::Time::now(), map_frame_, robot_frame_));
-
-		// publish commanded next target
-		publishCommandedTarget(tf::StampedTransform(tf::Transform(tf::Quaternion(target_pose.r.x(), target_pose.r.y(), target_pose.r.z(), target_pose.r.w()), tf::Vector3(target_pose.x(), target_pose.y(), target_pose.z())), ros::Time::now(), map_frame_, robot_frame_));
-
-		// get current robot speed
 		double robot_speed_x = 0.; // [m/s]
 		double robot_speed_theta = 0.;	// [rad/s]
 		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
 
 		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
 		const double max_speed = 0.3;
-		const double position_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
+		const double goal_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
 
-		// command new navigation goal
-		mira::navigation::TaskPtr task(new mira::navigation::Task());
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PositionTask(mira::Point2f(pose->val[0], pose->val[1]),
-				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/maps/MapFrame")));	// impose strong precision constraints, otherwise path cannot be followed properly
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(true, true)));
-//		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionPositionTask(mira::Point2f(pose->val[0], pose->val[1]),
-//				/*0.1, 0.1,*/ position_accuracy, position_accuracy, "/GlobalFrame", false, false)));	// impose strong precision constraints, otherwise path cannot be followed properly
-		// todo: (last point true optional)
-		//task->addSubTask(mira::navigation::SubTaskPtr(
-		//	new mira::navigation::SmoothTransitionTask(/*smoothTransition=*/true,
-		//	                                           /*allowTransit=*/true)));
-		// todo: (last point allowTransit=false)
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(pose->val[2], 1.5708)));
-		//task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::BOTH, 5.0f)));
-		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 0.9f /*0.98f*/)));	// costs for opposite task, 1.0 is forbidden, 0.0 is cheap/indifferent=BOTH
+		const double angle_accuracy = pi / 2;
+		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, true, cost_map_threshold);
 
-		// use without wall task on longer distances or on targets in free space far from a wall
-		mira::Pose3 current_robot_pose = robot_->getMiraAuthority().getTransform<mira::Pose3>("/robot/RobotFrame", "/maps/MapFrame");
-		const double distance_to_last_pose_sqr = (pose->val[0]-current_robot_pose.x())*(pose->val[0]-current_robot_pose.x()) + (pose->val[1]-current_robot_pose.y())*(pose->val[1]-current_robot_pose.y());
-		if (distance_to_last_pose_sqr <= wall_following_off_traveling_distance_threshold*wall_following_off_traveling_distance_threshold &&
-				computeFootprintToObstacleDistance(mira::transform_cast<mira::Pose2>(target_pose)) < std::max(0.2f, 2*target_wall_distance))		// todo: param 0.2 as minimum distance for activating wall following
-		{
-			std::cout << "ScitosDrive::wall_follow_callback: WallDistanceTask::KEEP_RIGHT active." << std::endl;
-			task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::WallDistanceTask(target_wall_distance, 1.0, mira::navigation::WallDistanceTask::KEEP_RIGHT)));
-		}
-
-		// Set this as our goal. Will cause the robot to start driving.
-		mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
-		r.wait();
-
-		// wait until close to target
-		const int return_code = waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance, -1., false);
-		std::cout << "   returned from waitForTargetApproach with return code: " << return_code << std::endl;
-
-		// on robot_freeze try move command again with driving backwards allowed
-		if (return_code==3)
-		{
-			std::cout << "############################ Cannot drive to goal, trying with driving backwards allowed now." << std::endl;
-			task->getSubTask<mira::navigation::PreferredDirectionTask>()->direction = mira::navigation::PreferredDirectionTask::BOTH;
-			//task->getSubTask<mira::navigation::PreferredDirectionTask>()->wrongDirectionCost = 0.5f;
-			robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task).get();
-			waitForTargetApproach(target_pose, goal_position_tolerance, goal_angle_tolerance, -1., false); // wait until close to target
-		}
+		// todo check about the WallDistanceTask::KEEP_RIGHT. seems worst than nothing
 	}
 
 	std::cout << "  Wall following successfully terminated." << std::endl;
