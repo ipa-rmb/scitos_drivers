@@ -12,7 +12,7 @@
 
 #include <geometry_msgs/Twist.h>
 #include <robot/Odometry.h> //# MIRA odometry
-#include <robot/RobotModel.h> //# MIRA robot modeltarget_pose Package(RobotDataTypes)
+#include <robot/RobotModel.h> //# MIRA robot model Package(RobotDataTypes)
 #include "scitos_mira/ScitosModule.h"
 #include <std_msgs/Bool.h>
 #include <scitos_msgs/ResetMotorStop.h>
@@ -153,12 +153,15 @@ private:
 	boost::shared_ptr<PathActionServer> path_action_server_; ///< Action server which accepts requests for a path to follow
 	void path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
 
-	//boost::shared_ptr<PathActionServer> wall_follow_action_server_; ///< Action server which accepts requests for wall following
-	//void wall_follow_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
+	bool computeClosestPosToRobot(const cv::Mat& level_set_map, double map_resolution, const cv::Point2d& map_origin, cv::Point& best_pos) const;
+	bool computePosInNeighborhoodWithMaxCosinus(cv::Mat& level_set_map, const cv::Point& current_pos, cv::Point& next_pos, const cv::Mat& driving_direction) const;
+	void computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoalConstPtr& goal, std::vector<cv::Vec3d> wall_poses_dense, double map_resolution, const cv::Point& map_origin) const;
+
 	boost::shared_ptr<WallFollowActionServer> wall_follow_action_server_; ///< Action server which accepts requests for wall following
 	void wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoalConstPtr& path);
 
-	double normalize_angle(double delta_angle);
+	void map_msgToCvFormat(const sensor_msgs::Image& image_map, cv::Mat& map) const;
+	double normalize_angle(double delta_angle) const;
 
 	ros::Subscriber cmd_vel_subscriber_;
 	ros::Publisher map_pub_;
