@@ -784,19 +784,17 @@ void ScitosDrive::map_msgToCvFormat(const sensor_msgs::Image& image_map, cv::Mat
 	map = cv_ptr_obj->image;
 }
 
-bool ScitosDrive::computeClosestPosToRobot(const cv::Mat& level_set_map, double map_resolution, const cv::Point2d& map_origin, cv::Point& best_pos) const
+bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Point& current_pos, cv::Point& best_pos) const
 {
-	mira::Pose3 robot_pose = getRobotPose();
 	double min_dist_sqr = 1e10;
-	for (int v=0; v < level_set_map.rows; ++v)
+	for (int v = 0; v < level_set_map.rows; ++v)
 	{
-		for (int u=0; u < level_set_map.cols; ++u)
+		for (int u = 0; u < level_set_map.cols; ++u)
 		{
 			if (level_set_map.at<uchar>(v, u) != 255) continue;
 
-			cv::Point2d pos(u*map_resolution + map_origin.x, v*map_resolution + map_origin.y);
-			const double dx = pos.x - robot_pose.x();
-			const double dy = pos.y - robot_pose.y();
+			const double dx = u - current_pos.x;
+			const double dy = v - current_pos.y;
 			const double dist_sqr = dx*dx + dy*dy;
 
 			if (dist_sqr < min_dist_sqr)
@@ -844,8 +842,10 @@ cv::Vec3d mapPosToWallGoal(const cv::Mat& driving_direction, const cv::Point& ma
 	return cv::Vec3d(map_pos.x*map_resolution + map_origin.x, map_pos.y*map_resolution + map_origin.y, driving_direction.at<float>(map_pos));
 }
 
-void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoalConstPtr& goal, std::vector<cv::Vec3d> wall_poses_dense, double map_resolution, const cv::Point& map_origin) const
+void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoalConstPtr& goal, std::vector<cv::Vec3d>& wall_poses_dense) const
 {
+	const double map_resolution = goal->map_resolution;	// in [m/cell]
+	const cv::Point2d map_origin(goal->map_origin.position.x, goal->map_origin.position.y);
 	// todo: robot_radius_/map_resolution;
 	// target distance of robot center to wall todo: check if valid
 	const double target_wall_distance_px = 0.55 / map_resolution;
@@ -857,11 +857,9 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 	cv::Mat area_map; map_msgToCvFormat(goal->area_map, area_map);
 	cv::Mat coverage_map; map_msgToCvFormat(goal->coverage_map, coverage_map);
 
-	// get the distance-transformed map
-	cv::Mat distance_map;	//variable for the distance-transformed map, type: CV_32FC1
-	cv::distanceTransform(area_map, distance_map, CV_DIST_L2, 5);
-	cv::Mat distance_map_disp;
-	cv::convertScaleAbs(distance_map, distance_map_disp);	// conversion to 8 bit image
+	// distance-transformed map, type: CV_32FC1
+	cv::Mat distance_map; cv::distanceTransform(area_map, distance_map, CV_DIST_L2, 5);
+	cv::Mat distance_map_disp; cv::convertScaleAbs(distance_map, distance_map_disp);	// conversion to 8 bit image
 
 	// find the points near walls in the accessible area of the room
 	cv::Mat level_set_map = cv::Mat::zeros(distance_map.rows, distance_map.cols, CV_8UC1);
@@ -875,23 +873,24 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 	cv::Mat driving_direction(distance_map.rows, distance_map.cols, CV_32FC1);
 
 	for (int v = 0; v < distance_map.rows; ++v)
-	{
-		for (int u = 0; u < distance_map.cols; ++u)
 		{
-			if (fabs(distance_map.at<float>(v,u) - target_wall_distance_px) >= target_wall_distance_px_epsilon) continue;
-
-			level_set_map.at<uchar>(v,u) = 255;
-			driving_direction.at<float>(v,u) = normalize_angle(atan2(distance_map_dy.at<double>(v,u), distance_map_dx.at<double>(v,u)) + direction_offset);
-		}
+			for (int u = 0; u < distance_map.cols; ++u)
+			{
+				if (fabs(distance_map.at<float>(v,u) - target_wall_distance_px) >= target_wall_distance_px_epsilon) continue;
+				level_set_map.at<uchar>(v,u) = 255;
+				driving_direction.at<float>(v,u) = normalize_angle(atan2(distance_map_dy.at<double>(v,u), distance_map_dx.at<double>(v,u)) + direction_offset);
+			}
 	}
 
+	mira::Pose3 robot_pos = getRobotPose();
+	cv::Point2d robot_pos_in_map((robot_pos.x() - map_origin.x)/map_resolution, (robot_pos.y() - map_origin.y) / map_resolution);
+
 	cv::Point current_pos;
-	if (!computeClosestPosToRobot(level_set_map, map_resolution, map_origin, current_pos))
+	if (!computeClosestPos(level_set_map, robot_pos_in_map, current_pos))
 		return;
 
 	wall_poses_dense.push_back(mapPosToWallGoal(driving_direction, current_pos, map_resolution, map_origin));
 	level_set_map.at<uchar>(current_pos) = 0;
-
 
 	// used to mask all cells in the neighborhood of already visited cells
 	// write driving direction into visited_map and only skip if driving direction is similar
@@ -901,21 +900,18 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 		cv::Point next_pos(-1,-1);
 		if (!computePosInNeighborhoodWithMaxCosinus(level_set_map, current_pos, next_pos, driving_direction))
 		{
-			if(!computeClosestPosToRobot(level_set_map, map_resolution, map_origin, next_pos))
-			{
+			if (!computeClosestPos(level_set_map, current_pos, next_pos))
 				break;
-			}
 		}
 
 		level_set_map.at<uchar>(next_pos) = 0;
-		// do not visit places a second time except with very different driving direction
-		if (visited_map.at<float>(next_pos) < -1e10 ||
-				fabs(normalize_angle(driving_direction.at<float>(next_pos) - visited_map.at<float>(next_pos))) > 100./180. * pi)
+		// do not visit places a second time
+		// except with very different driving direction
+		if (visited_map.at<float>(next_pos) < -1e10 || fabs(normalize_angle(driving_direction.at<float>(next_pos)-visited_map.at<float>(next_pos))) > 100./180.*pi)
 		{
+			wall_poses_dense.push_back(cv::Vec3d(next_pos.x*map_resolution + map_origin.x, next_pos.y*map_resolution + map_origin.y, driving_direction.at<float>(next_pos)));
 			cv::circle(visited_map, next_pos, 3, cv::Scalar(driving_direction.at<float>(next_pos)), -1);
-			wall_poses_dense.push_back(mapPosToWallGoal(driving_direction, next_pos, map_resolution, map_origin));
 		}
-
 		current_pos = next_pos;
 	}
 }
@@ -931,12 +927,11 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 
 	// collect the wall following path
 	std::vector<cv::Vec3d> wall_poses_dense;
-	computeWallPosesDense(goal, wall_poses_dense, map_resolution, map_origin);
+	computeWallPosesDense(goal, wall_poses_dense);
+
 	if (wall_poses_dense.empty())
-	{
-		std::cout << "wall poses dense is empty" << std::endl;
 		return;
-	}
+
 	std::vector<cv::Vec3d> wall_poses;
 	// reduce density of wall_poses
 	wall_poses.push_back(wall_poses_dense[0]);
@@ -1089,6 +1084,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 	wall_follow_action_server_->setAborted(res);
 #endif
 }
+
 
 bool ScitosDrive::reset_motor_stop(scitos_msgs::ResetMotorStop::Request  &req, scitos_msgs::ResetMotorStop::Response &res) {
   //  call_mira_service
