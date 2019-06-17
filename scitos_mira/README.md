@@ -11,11 +11,16 @@ Using the robot
 ---------------
 
 Various aspects of the robot are exposed as ROS services, published topics, subscribed topics and dynamic_reconfigure parameters. These are divided into 5 "modules":
+* Application - for controlling the ros application (start, pause, stop...)
 * Drive - for the control of the motors.
 * EBC - for controlling the power for extra devices (pan tilt and cameras).
 * Head - for controlling the HRI head.
 * Display - for the small status display on the base.
 * Charger - for battery monitoring and charging control.
+
+### Application
+#### Subscribed topics
+* `/dirt_detector_topic` and `/trash_detector_topic`. Any detections array published on this topic will be sent to the `Detections` mira Channel (can be displayed in Mira Center)
 
 ### Drive
 #### Published topics
@@ -33,7 +38,6 @@ The state of the motors, free-run mode, emergency button status, bumer status.
 #### Subscribed topics
 *  `/cmd_vel (geometry_msgs::Twist)`
 Any velocity published on this topic will be sent to the robot motor controller. Twist.linear.x corresponds to the desired linear velocity; Twist.angular.z corresponds to the angular velocity.
-
 
 #### Services
 * `/reset_motorstop (scitos_msgs::ResetMotorStop)` 

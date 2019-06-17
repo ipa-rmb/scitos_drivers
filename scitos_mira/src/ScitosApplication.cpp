@@ -17,10 +17,10 @@ void ScitosApplication::initialize()
 
 	// offered channels
 	application_status_sub_ = robot_->getRosNode().subscribe("/application_wet_cleaning_status", 1, &ScitosApplication::application_status_callback, this);
-	application_status_channel_ = robot_->getMiraAuthority().publish<int>("AutomaticCleaningStatus");	// todo: hack: put to separate module
+	application_status_channel_ = robot_->getMiraAuthority().publish<int>("AutomaticCleaningStatus");
 
 	// detections displays
-	detections_channel_ = robot_->getMiraAuthority().publish<mira::maps::PointCloud2>("Detections"); // todo: hack: put to separate module
+	detections_channel_ = robot_->getMiraAuthority().publish<mira::maps::PointCloud2>("Detections");
 	dirt_detections_sub_ = robot_->getRosNode().subscribe("/dirt_detector_topic", 1, &ScitosApplication::publish_detections, this);
 	trash_detections_sub_ = robot_->getRosNode().subscribe("/trash_detector_topic", 1, &ScitosApplication::publish_detections, this);
 }

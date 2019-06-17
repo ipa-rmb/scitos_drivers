@@ -117,14 +117,16 @@ private:
 
 	void publishComputedTarget(const tf::StampedTransform& transform);
 	void publishCommandedTarget(const tf::StampedTransform& transform);
-	ros::Publisher computed_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
-	ros::Publisher commanded_trajectory_pub_;		// publishes the commanded targets for the robot trajectory
-	std::string map_frame_;			// name of the map coordinate system
-	std::string map_clean_frame_;		// name of the map-clean coordinate system
-	std::string map_segmented_frame_;	// name of the map-segmented coordinate system
-	std::string robot_frame_;		// name of the robot base frame
-        std::string camera1_frame_;             // name of the camera1 coordinate system
-	double robot_radius_;		// the radius of the inner circle of the bounding box of the robot footprint, in [m]
+	ros::Publisher computed_trajectory_pub_;
+	ros::Publisher commanded_trajectory_pub_;
+
+	const std::string map_frame_ { "map" };
+	const std::string map_clean_frame_; // todo (rmb-ma) not used
+	const std::string map_segmented_frame_ { "map_segmented" }; // TODO don't use the same frame than map_frame_
+	const std::string robot_frame_ { "base_link" };
+    const std::string camera1_frame_ { "camera1_optical_frame" };
+
+    double robot_radius_;		// the radius of the inner circle of the bounding box of the robot footprint, in [m]
 	double coverage_radius_;		// the radius of the area of the coverage device (cleaner, camera, ...), in [m]
 	mira::RigidTransform3d coverage_offset_;		// the center offset of the area of the coverage device (cleaner, camera, ...) against robot_frame_, in [m]
 	cv::Point2d map_world_offset_;	// in [m]
@@ -134,7 +136,6 @@ private:
 	mira::Footprint footprint_;
 	mira::model::CollisionTest collision_test_;
 
-	const double pi = 3.14159265359;
 #endif
 
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
