@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <launch>
 	<!-- scitos_modules argument; must be a space seperated list of hardware modules to load -->
-	<arg name="SCITOS_MODULES" default="Drive Charger EBC Display Head"/>
+	<arg name="SCITOS_MODULES" default="Drive Charger EBC Display Head Application"/>
 	<arg name="SCITOS_CONFIG" default="$(find scitos_mira)/resources/SCITOSDriver.xml"/>
 	<!-- BARRIER_ENABLED should be set to true to enable the magnetic strip detector to cut out
 	the motors. If set to false, then magnetic safety barriers will have no effect. -->

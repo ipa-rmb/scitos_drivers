@@ -88,7 +88,7 @@ include_directories(include
 # include cmake file for MIRA
 include(CMakeLists.mira)
 MIRA_REQUIRE_PACKAGE(SCITOS)
-MIRA_REQUIRE_PACKAGE(PCL)
+#MIRA_REQUIRE_PACKAGE(PCL)	# todo:PCL -> uncomment
 
 MIRA_FIND_PACKAGE(Pilot)
 message("-- PACKAGE_Pilot_FOUND = ${PACKAGE_Pilot_FOUND}")
@@ -103,7 +103,8 @@ add_executable(scitos_node  src/scitos_node.cpp
 							src/ScitosDisplay.cpp
 							src/ScitosDrive.cpp
 							src/ScitosEBC.cpp
-							src/ScitosHead.cpp)
+							src/ScitosHead.cpp
+							src/ScitosApplication.cpp)
 # make sure configure headers are build before node using them
 add_dependencies(scitos_node ${PROJECT_NAME}_gencfg scitos_msgs_gencpp) 
 if(${PACKAGE_Pilot_FOUND})
