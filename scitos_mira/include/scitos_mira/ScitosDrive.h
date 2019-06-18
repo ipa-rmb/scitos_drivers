@@ -27,7 +27,7 @@
 #include <utils/Time.h>
 
 #include <actionlib/server/simple_action_server.h>
-#include <move_base_msgs/MoveBaseAction.h>
+#include <scitos_msgs/MoveBaseAction.h>
 #include <scitos_msgs/MoveBasePathAction.h>
 #include <scitos_msgs/MoveBaseWallFollowAction.h>
 #include <nav_msgs/OccupancyGrid.h>
@@ -60,7 +60,7 @@
 #include <boost/thread/mutex.hpp>
 #include <boost/make_shared.hpp>
 
-typedef actionlib::SimpleActionServer<move_base_msgs::MoveBaseAction> MoveBaseActionServer;
+typedef actionlib::SimpleActionServer<scitos_msgs::MoveBaseAction> MoveBaseActionServer;
 typedef actionlib::SimpleActionServer<scitos_msgs::MoveBasePathAction> PathActionServer;
 typedef actionlib::SimpleActionServer<scitos_msgs::MoveBaseWallFollowAction> WallFollowActionServer;
 
@@ -144,7 +144,7 @@ private:
 #endif
 
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
-	void move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal);
+	void move_base_callback(const scitos_msgs::MoveBaseGoalConstPtr& goal);
 
 	boost::shared_ptr<PathActionServer> path_action_server_; ///< Action server which accepts requests for a path to follow
 	mira::Pose2 computeRightCandidate(const mira::Pose2 &target_pose_in_merged_map, const double offset, cv::Point2d direction_left, const mira::maps::OccupancyGrid &merged_map,

@@ -365,7 +365,6 @@ void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string>
 	nav_pilot_event_status_ = data->value();
 }
 
-// TODO (rmb-ma). Remove the path_request boolean (used for preempted requests)
 TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, float position_accuracy, float position_tolerance, float angle_accuracy, float angle_tolerance,
 		 ScitosDrive::ActionServerType action_server_type, float cost_map_threshold)
 {
@@ -394,14 +393,14 @@ TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, float 
 }
 
 // todo (rmb-ma). change the message to add the tolerance (at least the angle tolerance)
-void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal)
+void ScitosDrive::move_base_callback(const scitos_msgs::MoveBaseGoalConstPtr& goal)
 {
 #ifdef __WITH_PILOT__
 	mira::Pose3 target_pose(Eigen::Vector3f(goal->target_pose.pose.position.x, goal->target_pose.pose.position.y, goal->target_pose.pose.position.z),
 						Eigen::Quaternionf(goal->target_pose.pose.orientation.w, goal->target_pose.pose.orientation.x, goal->target_pose.pose.orientation.y, goal->target_pose.pose.orientation.z));
 
-	const float angle_tolerance = PI/4;
-	const float position_tolerance = 0.05;
+	const float angle_tolerance = goal->goal_angle_tolerance;
+	const float position_tolerance = goal->goal_position_tolerance;
 	const float cost_map_threshold = 0.f;
 	const TargetCode return_code = setTaskAndWaitForTarget(target_pose, position_tolerance, position_tolerance, angle_tolerance, angle_tolerance, ScitosDrive::MOVE_BASE_ACTION, cost_map_threshold);
 
