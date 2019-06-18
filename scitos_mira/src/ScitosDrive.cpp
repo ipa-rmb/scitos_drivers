@@ -366,7 +366,8 @@ void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string>
 }
 
 // TODO (rmb-ma). Remove the path_request boolean (used for preempted requests)
-TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, const float position_accuracy, const float position_tolerance, const float angle_accuracy, const float angle_tolerance, bool path_request, const float cost_map_threshold)
+TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, float position_accuracy, float position_tolerance, float angle_accuracy, float angle_tolerance,
+		 ScitosDrive::ActionServerType action_server_type, float cost_map_threshold)
 {
 
 	const double max_speed_x = 0.6;//in [m/s] 0.6
@@ -383,11 +384,11 @@ TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, const 
 	mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
 	r.wait();
 
-	TargetCode return_code = waitForTargetApproach(target, position_tolerance, angle_tolerance, cost_map_threshold, path_request);
+	TargetCode return_code = waitForTargetApproach(target, position_tolerance, angle_tolerance, action_server_type, cost_map_threshold);
 	if (return_code == TARGET_ROBOT_DOES_NOT_MOVE) {
 		task->getSubTask<mira::navigation::PreferredDirectionTask>()->direction = mira::navigation::PreferredDirectionTask::BOTH;
 		robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
-		return_code = waitForTargetApproach(target, position_tolerance, angle_tolerance, cost_map_threshold, path_request);
+		return_code = waitForTargetApproach(target, position_tolerance, angle_tolerance, action_server_type, cost_map_threshold);
 	}
 	return return_code;
 }
@@ -402,10 +403,10 @@ void ScitosDrive::move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr&
 	const float angle_tolerance = PI/4;
 	const float position_tolerance = 0.05;
 	const float cost_map_threshold = 0.f;
-	const TargetCode return_code = setTaskAndWaitForTarget(target_pose, position_tolerance, position_tolerance, angle_tolerance, angle_tolerance, false, cost_map_threshold);
+	const TargetCode return_code = setTaskAndWaitForTarget(target_pose, position_tolerance, position_tolerance, angle_tolerance, angle_tolerance, ScitosDrive::MOVE_BASE_ACTION, cost_map_threshold);
 
 	MoveBaseActionServer::Result res;
-	if (return_code == TARGET_GOAL_REACHED || return_code == TARGET_PILOT_NOT_IN_PLAN_AND_DRIVE_MODE) // todo (rmb-ma). Why return_code == 2 ?
+	if (return_code == TARGET_GOAL_REACHED || return_code == TARGET_PILOT_NOT_IN_PLAN_AND_DRIVE_MODE)
 		move_base_action_server_->setSucceeded(res);
 	else
 		move_base_action_server_->setAborted(res, "move_base_callback returned with status " + return_code);
@@ -532,7 +533,21 @@ double ScitosDrive::computeEuclideanDistanceToGoal(const mira::Pose3& pose_a, co
 	return sqrt(dx*dx + dy*dy);
 }
 
-TargetCode ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold, const bool path_request)
+bool ScitosDrive::isActionServerPreemptRequested(ScitosDrive::ActionServerType action_server_type) const {
+	switch (action_server_type)
+	{
+		case ScitosDrive::WALL_FOLLOW_ACTION:
+			return wall_follow_action_server_->isPreemptRequested();
+		case ScitosDrive::MOVE_BASE_ACTION:
+			return move_base_action_server_->isPreemptRequested();
+		case ScitosDrive::PATH_ACTION:
+			return path_action_server_->isPreemptRequested();
+	}
+	return false;
+}
+
+TargetCode ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, float goal_position_tolerance, float goal_angle_tolerance,
+		ScitosDrive::ActionServerType action_server_type, float cost_map_threshold)
 {
 	const double freeze_offset = 2.f; // [s]
 	const double freeze_min_speed = 0.2f;
@@ -541,8 +556,7 @@ TargetCode ScitosDrive::waitForTargetApproach(const mira::Pose3& target_pose, co
 	ros::Time last_robot_movement = ros::Time::now();
 	while (true)
 	{
-		// todo (rmb-ma). see how to refactor this condition
-		if ((path_request && path_action_server_->isPreemptRequested()) || (!path_request && move_base_action_server_->isPreemptRequested()))
+		if (isActionServerPreemptRequested(action_server_type))
 		{
 			stopRobotAtCurrentPosition();
 			return TARGET_GOAL_REACHED;
@@ -734,7 +748,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		goal_position_tolerance = 0.4 + robot_speed_x * desired_planning_ahead_time;
 
 		const double angle_accuracy = 0.087;
-		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, true, cost_map_threshold);
+		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, ScitosDrive::PATH_ACTION, cost_map_threshold);
 	}
 
 	std::cout << "  Path following successfully terminated." << std::endl;
@@ -999,7 +1013,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		const double goal_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
 
 		const double angle_accuracy = PI / 2;
-		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, true, cost_map_threshold);
+		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, ScitosDrive::WALL_FOLLOW_ACTION, cost_map_threshold);
 
 		// todo check about the WallDistanceTask::KEEP_RIGHT. seems worst than nothing
 	}
