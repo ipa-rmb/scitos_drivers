@@ -117,7 +117,7 @@ private:
 	double computeEuclideanDistanceToGoal(const mira::Pose3& pose_a, const mira::Pose3& pose_b) const;
 	void stopRobotAtCurrentPosition();
 	TargetCode setTaskAndWaitForTarget(const mira::Pose3 target, float position_accuracy, float position_tolerance, float angle_accuracy, float angle_tolerance,
-			ScitosDrive::ActionServerType action_server_type, float cost_map_threshold);
+			ScitosDrive::ActionServerType action_server_type, float cost_map_threshold, double target_wall_distance=-1);
 	TargetCode waitForTargetApproach(const mira::Pose3& target_pose, float goal_position_tolerance, float goal_angle_tolerance, ScitosDrive::ActionServerType action_server_type, float cost_map_threshold=-1);
 
 	void publishComputedTarget(const tf::StampedTransform& transform);

@@ -366,7 +366,7 @@ void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string>
 }
 
 TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, float position_accuracy, float position_tolerance, float angle_accuracy, float angle_tolerance,
-		 ScitosDrive::ActionServerType action_server_type, float cost_map_threshold)
+		 ScitosDrive::ActionServerType action_server_type, float cost_map_threshold, double target_wall_distance)
 {
 
 	const double max_speed_x = 0.6;//in [m/s] 0.6
@@ -380,6 +380,9 @@ TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, float 
 	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 1.0f)));
 	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(true, true)));
 
+	if (target_wall_distance > 0)
+		task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::WallDistanceTask(target_wall_distance, 1.0, mira::navigation::WallDistanceTask::KEEP_RIGHT)));
+
 	mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/navigation/Pilot", "setTask", task);
 	r.wait();
 
@@ -392,7 +395,6 @@ TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, float 
 	return return_code;
 }
 
-// todo (rmb-ma). change the message to add the tolerance (at least the angle tolerance)
 void ScitosDrive::move_base_callback(const scitos_msgs::MoveBaseGoalConstPtr& goal)
 {
 #ifdef __WITH_PILOT__
@@ -624,7 +626,6 @@ mira::Pose2 ScitosDrive::computeLeftCandidate(const mira::Pose2 &target_pose_in_
 	return target_pose_candidate;
 }
 
-// TODO (rmb-ma) warning. Check that it's working
 mira::Pose2 ScitosDrive::computeRightCandidate(const mira::Pose2 &target_pose_in_merged_map, const double offset, cv::Point2d direction_left,
 		const mira::maps::OccupancyGrid &merged_map,
 		const mira::RigidTransform2f &map_to_odometry, const cv::Point2d &map_world_offset_, double map_resolution_,
@@ -746,7 +747,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		// todo: if there is a big distance between two successive goal positions, decrease the goal tolerance
 		goal_position_tolerance = 0.4 + robot_speed_x * desired_planning_ahead_time;
 
-		const double angle_accuracy = 0.087;
+		const double angle_accuracy = 5*PI/180;
 		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, ScitosDrive::PATH_ACTION, cost_map_threshold);
 	}
 
@@ -864,8 +865,7 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 {
 	const double map_resolution = goal->map_resolution;	// in [m/cell]
 	const cv::Point2d map_origin(goal->map_origin.position.x, goal->map_origin.position.y);
-	// target distance of robot center to wall todo: check if valid
-	const double target_wall_distance_px = 0.55 / map_resolution;
+	const double target_wall_distance_px = (goal->target_wall_distance ? 0.1 + robot_radius_ +  goal->target_wall_distance : 0.55) / map_resolution;
 
 	// allowed deviation from target distance of robot center to wall, used for sampling goal poses along the wall
 	const double target_wall_distance_px_epsilon = 1;
@@ -984,10 +984,10 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 			1.0f;
 	const double cost_map_threshold = -1.;
 
-	for (std::vector<cv::Vec3d>::iterator pose = wall_poses.begin(); pose!=wall_poses.end(); ++pose)
-	{
-		// todo handle wall_follow_action_server is preempt requested in the waitForTargetApproach
+	if (wall_poses.empty()) return;
 
+	for (unsigned k = 0; k < wall_poses.size(); ++k)
+	{
 		if (wall_follow_action_server_->isPreemptRequested())
 		{
 			WallFollowActionServer::Result res;
@@ -995,7 +995,8 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 			return;
 		}
 
-		mira::Pose3 target_pose3(pose->val[0], pose->val[1], 0., pose->val[2], 0., 0.);
+		mira::Pose3 target_pose3(wall_poses[k].val[0], wall_poses[k].val[1], 0., wall_poses[k].val[2], 0., 0.);
+
 		publishComputedTarget(tf::StampedTransform(tf::Transform(
 				tf::Quaternion(target_pose3.r.x(), target_pose3.r.y(), target_pose3.r.z(), target_pose3.r.w()),
 				tf::Vector3(target_pose3.x(), target_pose3.y(), target_pose3.z())), ros::Time::now(), map_frame_, robot_frame_));
@@ -1009,12 +1010,19 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 
 		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
 		const double max_speed = 0.3;
-		const double goal_accuracy = 0.05 + 0.2 * std::max(0., max_speed-fabs(robot_speed_x))/max_speed;
+		const double goal_accuracy = 0.05 + 0.2 * std::max(0., max_speed - fabs(robot_speed_x))/max_speed;
 
 		const double angle_accuracy = PI / 2;
-		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, ScitosDrive::WALL_FOLLOW_ACTION, cost_map_threshold);
 
-		// todo check about the WallDistanceTask::KEEP_RIGHT. seems worst than nothing
+		const mira::Pose3 robot_pose = getRobotPose();
+		const double cos_angle = cos(wall_poses[k].val[2] - robot_pose.yaw());
+		const double dx = wall_poses[k].val[0] - robot_pose.x();
+		const double dy = wall_poses[k].val[1] - robot_pose.y();
+		const double current_target_wall_distance = cos_angle > 0.4 && dx*dx + dy*dy < 0.7*0.7 ? target_wall_distance : -1;
+
+		std::cout << "cos_angle " << cos_angle << " | dist "<< (dx*dx + dy*dy) << std::endl;
+		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance,
+				ScitosDrive::WALL_FOLLOW_ACTION, cost_map_threshold, current_target_wall_distance);
 	}
 
 	std::cout << "  Wall following successfully terminated." << std::endl;
