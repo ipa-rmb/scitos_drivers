@@ -749,6 +749,14 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 
 		const double angle_accuracy = 5*PI/180;
 		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, ScitosDrive::PATH_ACTION, cost_map_threshold);
+
+		if (path_action_server_->isPreemptRequested())
+		{
+			PathActionServer::Result res;
+			res.last_visited_index = i;
+			path_action_server_->setAborted(res);
+			return;
+		}
 	}
 
 	std::cout << "  Path following successfully terminated." << std::endl;
@@ -1020,7 +1028,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		const double dy = wall_poses[k].val[1] - robot_pose.y();
 		const double current_target_wall_distance = cos_angle > 0.4 && dx*dx + dy*dy < 0.7*0.7 ? target_wall_distance : -1;
 
-		std::cout << "cos_angle " << cos_angle << " | dist "<< (dx*dx + dy*dy) << std::endl;
 		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance,
 				ScitosDrive::WALL_FOLLOW_ACTION, cost_map_threshold, current_target_wall_distance);
 	}
