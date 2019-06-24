@@ -880,7 +880,7 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 
 	cv::Mat map; map_msgToCvFormat(goal->map, map);
 	cv::Mat area_map; map_msgToCvFormat(goal->area_map, area_map);
-	cv::Mat coverage_map; map_msgToCvFormat(goal->coverage_map, coverage_map);
+	cv::Mat coverage_map; map_msgToCvFormat(goal->coverage_map, coverage_map); // todo rmb-ma unused
 
 	// distance-transformed map, type: CV_32FC1
 	cv::Mat distance_map; cv::distanceTransform(area_map, distance_map, CV_DIST_L2, 5);
@@ -901,6 +901,7 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 		{
 			for (int u = 0; u < distance_map.cols; ++u)
 			{
+				if (coverage_map.at<uchar>(v, u) == 255) continue;
 				if (fabs(distance_map.at<float>(v,u) - target_wall_distance_px) >= target_wall_distance_px_epsilon) continue;
 				level_set_map.at<uchar>(v,u) = 255;
 				driving_direction.at<float>(v,u) = normalize_angle(atan2(distance_map_dy.at<double>(v,u), distance_map_dx.at<double>(v,u)) + direction_offset);
@@ -965,7 +966,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		const double dx = next.val[0] - previous.val[0];
 		const double dy = next.val[1] - previous.val[1];
 
-		// todo (rmb-ma) why 0.16 ?? 1.5708
 		if (dx*dx + dy*dy > 0.16*0.16 || normalize_angle(next.val[2] - previous.val[2]) > 1.5708)
 		{
 			wall_poses.push_back(wall_poses_dense[i]);
@@ -992,8 +992,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 			1.0f;
 	const double cost_map_threshold = -1.;
 
-	if (wall_poses.empty()) return;
-
 	for (unsigned k = 0; k < wall_poses.size(); ++k)
 	{
 		if (wall_follow_action_server_->isPreemptRequested())
@@ -1019,7 +1017,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
 		const double max_speed = 0.3;
 		const double goal_accuracy = 0.05 + 0.2 * std::max(0., max_speed - fabs(robot_speed_x))/max_speed;
-
 		const double angle_accuracy = PI / 2;
 
 		const mira::Pose3 robot_pose = getRobotPose();
