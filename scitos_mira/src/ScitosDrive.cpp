@@ -880,7 +880,7 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 
 	cv::Mat map; map_msgToCvFormat(goal->map, map);
 	cv::Mat area_map; map_msgToCvFormat(goal->area_map, area_map);
-	cv::Mat coverage_map; map_msgToCvFormat(goal->coverage_map, coverage_map); // todo rmb-ma unused
+	cv::Mat coverage_map; map_msgToCvFormat(goal->coverage_map, coverage_map);
 
 	// distance-transformed map, type: CV_32FC1
 	cv::Mat distance_map; cv::distanceTransform(area_map, distance_map, CV_DIST_L2, 5);
@@ -898,14 +898,33 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 	cv::Mat driving_direction(distance_map.rows, distance_map.cols, CV_32FC1);
 
 	for (int v = 0; v < distance_map.rows; ++v)
+	{
+		for (int u = 0; u < distance_map.cols; ++u)
 		{
-			for (int u = 0; u < distance_map.cols; ++u)
+
+			if (fabs(distance_map.at<float>(v,u) - target_wall_distance_px) >= target_wall_distance_px_epsilon) continue;
+
+			// Check if some covered pixels are in the neighborhood
+			int nb_pixels = 0;
+			int sum_pixels = 0;
+			const int range_size = target_wall_distance_px + target_wall_distance_px_epsilon;
+			for (int vv = std::max(0, v - range_size); vv < std::min(distance_map.rows, v + range_size); ++vv)
 			{
-				if (coverage_map.at<uchar>(v, u) == 255) continue;
-				if (fabs(distance_map.at<float>(v,u) - target_wall_distance_px) >= target_wall_distance_px_epsilon) continue;
-				level_set_map.at<uchar>(v,u) = 255;
-				driving_direction.at<float>(v,u) = normalize_angle(atan2(distance_map_dy.at<double>(v,u), distance_map_dx.at<double>(v,u)) + direction_offset);
+				for (int uu = std::max(0, u - range_size); uu < std::min(distance_map.cols, u + range_size); ++uu)
+				{
+					if (area_map.at<uchar>(vv, uu) != 255) continue;
+					nb_pixels++;
+					sum_pixels += coverage_map.at<uchar>(vv, uu);
+				}
 			}
+
+			// Some neighbors pixels are visited
+			if (sum_pixels > 0) continue;
+			// if (coverage_map.at<uchar>(v, u) == 255) continue;
+
+			level_set_map.at<uchar>(v,u) = 255;
+			driving_direction.at<float>(v,u) = normalize_angle(atan2(distance_map_dy.at<double>(v,u), distance_map_dx.at<double>(v,u)) + direction_offset);
+		}
 	}
 
 	mira::Pose3 robot_pos = getRobotPose();
