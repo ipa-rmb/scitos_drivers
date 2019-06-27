@@ -368,7 +368,6 @@ void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string>
 TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, float position_accuracy, float position_tolerance, float angle_accuracy, float angle_tolerance,
 		 ScitosDrive::ActionServerType action_server_type, float cost_map_threshold, double target_wall_distance)
 {
-
 	const double max_speed_x = 0.6;//in [m/s] 0.6
 	const double max_speed_phi = mira::deg2rad(60.f);	// in [rad/s]
 
@@ -785,6 +784,7 @@ void ScitosDrive::map_msgToCvFormat(const sensor_msgs::Image& image_map, cv::Mat
 bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Point& current_pos, cv::Point& best_pos) const
 {
 	double min_dist_sqr = 1e10;
+
 	for (int v = 0; v < level_set_map.rows; ++v)
 	{
 		for (int u = 0; u < level_set_map.cols; ++u)
@@ -839,8 +839,8 @@ cv::Vec3d mapPosToWallGoal(const cv::Mat& driving_direction, const cv::Point& ma
 {
 	return cv::Vec3d(map_pos.x*map_resolution + map_origin.x, map_pos.y*map_resolution + map_origin.y, driving_direction.at<float>(map_pos));
 }
-
 void ScitosDrive::displayWallFollowerPath(const std::vector<cv::Vec3d>& wall_poses, const cv::Mat& area_map, double map_resolution, const cv::Point& map_origin) const
+
 {
 	for(size_t step = wall_poses.size() - 1; step < wall_poses.size(); ++step)
 	{
@@ -1025,6 +1025,15 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		publishComputedTarget(tf::StampedTransform(tf::Transform(
 				tf::Quaternion(target_pose3.r.x(), target_pose3.r.y(), target_pose3.r.z(), target_pose3.r.w()),
 				tf::Vector3(target_pose3.x(), target_pose3.y(), target_pose3.z())), ros::Time::now(), map_frame_, robot_frame_));
+
+		const mira::Pose3 robot_pos = getRobotPose();
+		const double dx = robot_pos.x() - target_pose3.x();
+		const double dy = robot_pos.y() - target_pose3.y();
+
+		const double angle_robot_to_pose = dx*cos(target_pose3.yaw()) + dy*sin(target_pose3.yaw());
+		if (angle_robot_to_pose > 0)
+			target_pose3 = mira::Pose3(wall_poses[k].val[0], wall_poses[k].val[1], 0., PI + wall_poses[k].val[2], 0., 0.);
+
 		publishCommandedTarget(tf::StampedTransform(tf::Transform(
 				tf::Quaternion(target_pose3.r.x(), target_pose3.r.y(), target_pose3.r.z(), target_pose3.r.w()),
 				tf::Vector3(target_pose3.x(), target_pose3.y(), target_pose3.z())), ros::Time::now(), map_frame_, robot_frame_));
@@ -1040,8 +1049,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 
 		const mira::Pose3 robot_pose = getRobotPose();
 		const double cos_angle = cos(wall_poses[k].val[2] - robot_pose.yaw());
-		const double dx = wall_poses[k].val[0] - robot_pose.x();
-		const double dy = wall_poses[k].val[1] - robot_pose.y();
 		const double current_target_wall_distance = cos_angle > 0.4 && dx*dx + dy*dy < 0.7*0.7 ? target_wall_distance : -1;
 
 		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance,
