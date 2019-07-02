@@ -59,7 +59,12 @@ void ScitosDrive::initialize() {
   mira::Channel<mira::maps::OccupancyGrid> map_channel = robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/static/Map", &ScitosDrive::map_data_callback, this);
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/cleaning/Map", &ScitosDrive::map_clean_data_callback, this);	// todo: hack:
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/segmentation/Map", &ScitosDrive::map_segmented_data_callback, this);
-  // todo:PCL -> uncomment		robot_->getMiraAuthority().subscribe<pcl::PointCloud<pcl::PointXYZRGB> >("/robot/depthCam1/pcl/PCLOut", &ScitosDrive::camera1_pcl_data_callback, this);
+
+  // todo:PCL -> uncomment
+  // robot_->getMiraAuthority().subscribe<pcl::PointCloud<pcl::PointXYZRGB> >("/robot/depthCam1/pcl/PCLOut", &ScitosDrive::camera1_pcl_data_callback, this);
+  camera_depth_points_sub_ = robot_->getRosNode().subscribe<sensor_msgs::PointCloud2>("/camera/depth_registered/points", 1,
+		  &ScitosDrive::publishCameraPosition, this);
+
   mira::Channel<mira::maps::GridMap<double,1> > cost_map_channel = robot_->getMiraAuthority().subscribe<mira::maps::GridMap<double,1> >("/maps/cost/PlannerMap_FinalCostMap", &ScitosDrive::cost_map_data_callback, this);
   robot_->getMiraAuthority().bootup("Waiting for data on channel /maps/cost/PlannerMap_FinalCostMap");
   cost_map_channel.waitForData();
@@ -294,10 +299,25 @@ void ScitosDrive::map_segmented_data_callback(mira::ChannelRead<mira::maps::Occu
 	publish_grid_map(data->value(), map_segmented_pub_, map_segmented_frame_);
 }
 
-// todo:PCL -> uncomment
-//void ScitosDrive::camera1_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB>> data)
-//{
-//	ros::Time cam_pcl_time = ros::Time::now();
+void ScitosDrive::publishCameraPosition(const sensor_msgs::PointCloud2ConstPtr& point_cloud2_rgb_msg)
+{
+	ros::Time cam_pcl_time = ros::Time::now();
+
+	geometry_msgs::TransformStamped localization_tf;
+	localization_tf.header.stamp = cam_pcl_time;
+	localization_tf.header.frame_id = robot_frame_;
+	localization_tf.child_frame_id = camera1_frame_;
+	//mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
+	mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/depthCam1/PrimeSenseFrame", "/robot/RobotFrame");
+	tf::transformEigenToMsg(map_to_odometry, localization_tf.transform);
+	// send the transform
+	robot_->getTFBroadcaster().sendTransform(localization_tf);
+}
+
+void ScitosDrive::camera1_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB>> data)
+{
+	// todo: PCL -> uncomment
+	ros::Time cam_pcl_time = ros::Time::now();
 //	// convert point cloud to ROS format
 //	//ROS_INFO("ScitosDrive::camera1_pcl_data_callback: Received camera1_pcl.");
 //	sensor_msgs::PointCloud2 camera_pcl;
@@ -305,18 +325,18 @@ void ScitosDrive::map_segmented_data_callback(mira::ChannelRead<mira::maps::Occu
 //	camera_pcl.header.stamp = cam_pcl_time;
 //	camera_pcl.header.frame_id = camera1_frame_;
 //	camera1_pcl_pub_.publish(camera_pcl);
-//
-//	// publish localization if available
-//	geometry_msgs::TransformStamped localization_tf;
-//	localization_tf.header.stamp = cam_pcl_time;
-//	localization_tf.header.frame_id = robot_frame_;
-//	localization_tf.child_frame_id = camera1_frame_;
-//	//mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
-//	mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/depthCam1/PrimeSenseFrame", "/robot/RobotFrame");
-//	tf::transformEigenToMsg(map_to_odometry, localization_tf.transform);
-//	// send the transform
-//	robot_->getTFBroadcaster().sendTransform(localization_tf);
-//}
+
+	// publish localization if available
+	geometry_msgs::TransformStamped localization_tf;
+	localization_tf.header.stamp = cam_pcl_time;
+	localization_tf.header.frame_id = robot_frame_;
+	localization_tf.child_frame_id = camera1_frame_;
+	//mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/OdometryFrame", "/maps/MapFrame");
+	mira::RigidTransform3d map_to_odometry = robot_->getMiraAuthority().getTransform<mira::RigidTransform3d>("/robot/depthCam1/PrimeSenseFrame", "/robot/RobotFrame");
+	tf::transformEigenToMsg(map_to_odometry, localization_tf.transform);
+	// send the transform
+	robot_->getTFBroadcaster().sendTransform(localization_tf);
+}
 
 void ScitosDrive::publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id)
 {

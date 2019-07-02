@@ -104,7 +104,8 @@ private:
 	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void map_clean_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void map_segmented_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
-// todo:PCL -> uncomment		void camera1_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB> > data);
+	void camera1_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB> > data);
+	void publishCameraPosition(const sensor_msgs::PointCloud2ConstPtr& point_cloud2_rgb_msg);
 	void publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
@@ -129,7 +130,7 @@ private:
 	const std::string map_clean_frame_; // todo (rmb-ma) not used
 	const std::string map_segmented_frame_ { "map_segmented" }; // TODO don't use the same frame than map_frame_
 	const std::string robot_frame_ { "base_link" };
-    const std::string camera1_frame_ { "camera1_optical_frame" };
+	const std::string camera1_frame_ { "camera1_optical_frame" };
 
     double robot_radius_;		// the radius of the inner circle of the bounding box of the robot footprint, in [m]
 	double coverage_radius_;		// the radius of the area of the coverage device (cleaner, camera, ...), in [m]
@@ -181,6 +182,7 @@ private:
 	ros::Publisher rfid_pub_;
 	ros::Publisher magnetic_barrier_pub_;
 	ros::Publisher emergency_stop_pub_;
+	ros::Subscriber camera_depth_points_sub_;
 	ros::Publisher camera1_pcl_pub_;
 
 	ros::ServiceServer reset_motor_stop_service_;
