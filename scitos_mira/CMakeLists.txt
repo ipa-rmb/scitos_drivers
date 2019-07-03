@@ -4,7 +4,7 @@ project(scitos_mira)
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
-find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp std_msgs cob_srvs sensor_msgs tf nav_msgs scitos_msgs dynamic_reconfigure move_base_msgs actionlib actionlib_msgs cv_bridge eigen_conversions pcl_ros)
+find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp std_msgs cob_srvs sensor_msgs tf nav_msgs scitos_msgs dynamic_reconfigure move_base_msgs actionlib actionlib_msgs cv_bridge eigen_conversions pcl_ros cob_object_detection_msgs)
 
 find_package(OpenCV REQUIRED)
 
