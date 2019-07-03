@@ -4,7 +4,7 @@ project(scitos_mira)
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
-find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp std_msgs cob_srvs sensor_msgs tf nav_msgs scitos_msgs dynamic_reconfigure move_base_msgs actionlib actionlib_msgs cv_bridge eigen_conversions)
+find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp std_msgs cob_srvs sensor_msgs tf nav_msgs scitos_msgs dynamic_reconfigure move_base_msgs actionlib actionlib_msgs cv_bridge eigen_conversions pcl_ros)
 
 find_package(OpenCV REQUIRED)
 
@@ -88,6 +88,7 @@ include_directories(include
 # include cmake file for MIRA
 include(CMakeLists.mira)
 MIRA_REQUIRE_PACKAGE(SCITOS)
+MIRA_REQUIRE_PACKAGE(PCL)	# todo:PCL -> uncomment
 
 MIRA_FIND_PACKAGE(Pilot)
 message("-- PACKAGE_Pilot_FOUND = ${PACKAGE_Pilot_FOUND}")
@@ -102,14 +103,18 @@ add_executable(scitos_node  src/scitos_node.cpp
 							src/ScitosDisplay.cpp
 							src/ScitosDrive.cpp
 							src/ScitosEBC.cpp
-							src/ScitosHead.cpp)
+							src/ScitosHead.cpp
+							src/ScitosApplication.cpp)
 # make sure configure headers are build before node using them
 add_dependencies(scitos_node ${PROJECT_NAME}_gencfg scitos_msgs_gencpp) 
 if(${PACKAGE_Pilot_FOUND})
 	set_target_properties(scitos_node PROPERTIES COMPILE_DEFINITIONS "__WITH_PILOT__")
 endif(${PACKAGE_Pilot_FOUND})
 
-target_link_libraries(scitos_node ${OpenCV_LIBRARIES} ${catkin_LIBRARIES})
+target_link_libraries(scitos_node
+	${OpenCV_LIBRARIES}
+	${catkin_LIBRARIES}
+)
 
 
 ## Add cmake target dependencies of the executable/library
