@@ -801,6 +801,7 @@ void ScitosDrive::map_msgToCvFormat(const sensor_msgs::Image& image_map, cv::Mat
 	map = cv_ptr_obj->image;
 }
 
+// todo rmb-ma (check the wrong orientation bug and how to solve it in this function)
 bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Point& current_pos, cv::Point& best_pos) const
 {
 	double min_dist_sqr = 1e10;
@@ -921,26 +922,8 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 	{
 		for (int u = 0; u < distance_map.cols; ++u)
 		{
-
+			if (coverage_map.at<uchar>(v, u) == 255) continue;
 			if (fabs(distance_map.at<float>(v,u) - target_wall_distance_px) >= target_wall_distance_px_epsilon) continue;
-
-			// Check if some covered pixels are in the neighborhood
-			int nb_pixels = 0;
-			int sum_pixels = 0;
-			const int range_size = target_wall_distance_px + target_wall_distance_px_epsilon;
-			for (int vv = std::max(0, v - range_size); vv < std::min(distance_map.rows, v + range_size); ++vv)
-			{
-				for (int uu = std::max(0, u - range_size); uu < std::min(distance_map.cols, u + range_size); ++uu)
-				{
-					if (area_map.at<uchar>(vv, uu) != 255) continue;
-					nb_pixels++;
-					sum_pixels += coverage_map.at<uchar>(vv, uu);
-				}
-			}
-
-			// Some neighbors pixels are visited
-			if (sum_pixels > 0) continue;
-			// if (coverage_map.at<uchar>(v, u) == 255) continue;
 
 			level_set_map.at<uchar>(v,u) = 255;
 			driving_direction.at<float>(v,u) = normalize_angle(atan2(distance_map_dy.at<double>(v,u), distance_map_dx.at<double>(v,u)) + direction_offset);
@@ -1051,8 +1034,6 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		const double dy = robot_pos.y() - target_pose3.y();
 
 		const double angle_robot_to_pose = dx*cos(target_pose3.yaw()) + dy*sin(target_pose3.yaw());
-		if (angle_robot_to_pose > 0)
-			target_pose3 = mira::Pose3(wall_poses[k].val[0], wall_poses[k].val[1], 0., PI + wall_poses[k].val[2], 0., 0.);
 
 		publishCommandedTarget(tf::StampedTransform(tf::Transform(
 				tf::Quaternion(target_pose3.r.x(), target_pose3.r.y(), target_pose3.r.z(), target_pose3.r.w()),
