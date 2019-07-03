@@ -27,7 +27,7 @@
 #include <utils/Time.h>
 
 #include <actionlib/server/simple_action_server.h>
-#include <move_base_msgs/MoveBaseAction.h>
+#include <scitos_msgs/MoveBaseAction.h>
 #include <scitos_msgs/MoveBasePathAction.h>
 #include <scitos_msgs/MoveBaseWallFollowAction.h>
 #include <nav_msgs/OccupancyGrid.h>
@@ -60,7 +60,7 @@
 #include <boost/thread/mutex.hpp>
 #include <boost/make_shared.hpp>
 
-typedef actionlib::SimpleActionServer<move_base_msgs::MoveBaseAction> MoveBaseActionServer;
+typedef actionlib::SimpleActionServer<scitos_msgs::MoveBaseAction> MoveBaseActionServer;
 typedef actionlib::SimpleActionServer<scitos_msgs::MoveBasePathAction> PathActionServer;
 typedef actionlib::SimpleActionServer<scitos_msgs::MoveBaseWallFollowAction> WallFollowActionServer;
 
@@ -68,6 +68,9 @@ enum TargetCode { TARGET_GOAL_REACHED = 0, TARGET_INACESSIBLE = 1, TARGET_PILOT_
 
 class ScitosDrive: public ScitosModule {
 public:
+
+	enum ActionServerType { PATH_ACTION, WALL_FOLLOW_ACTION,  MOVE_BASE_ACTION };
+
 	static ScitosModule*  Create() {
 		return new ScitosDrive();
 	}
@@ -101,7 +104,8 @@ private:
 	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void map_clean_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void map_segmented_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
-// todo:PCL -> uncomment		void camera1_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB> > data);
+	void camera1_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB> > data);
+	void publishCameraPosition(const sensor_msgs::PointCloud2ConstPtr& point_cloud2_rgb_msg);
 	void publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
@@ -109,11 +113,13 @@ private:
 	float computeFootprintToObstacleDistance(const mira::Pose2& target_pose, mira::Pose2& target_pose_in_merged_map, mira::maps::OccupancyGrid& merged_map,
 			mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map, bool debug_texts=false);
 
+	bool isActionServerPreemptRequested(ScitosDrive::ActionServerType action_server_type) const;
 	mira::Pose3 getRobotPose() const;
 	double computeEuclideanDistanceToGoal(const mira::Pose3& pose_a, const mira::Pose3& pose_b) const;
 	void stopRobotAtCurrentPosition();
-	TargetCode setTaskAndWaitForTarget(const mira::Pose3 target, const float position_accuracy, const float position_tolerance, const float angle_accuracy, const float angle_tolerance, bool path_request, const float cost_map_threshold);
-	TargetCode waitForTargetApproach(const mira::Pose3& target_pose, const float goal_position_tolerance, const float goal_angle_tolerance, const float cost_map_threshold=-1, const bool path_request=false);
+	TargetCode setTaskAndWaitForTarget(const mira::Pose3 target, float position_accuracy, float position_tolerance, float angle_accuracy, float angle_tolerance,
+			ScitosDrive::ActionServerType action_server_type, float cost_map_threshold, double target_wall_distance=-1);
+	TargetCode waitForTargetApproach(const mira::Pose3& target_pose, float goal_position_tolerance, float goal_angle_tolerance, ScitosDrive::ActionServerType action_server_type, float cost_map_threshold=-1);
 
 	void publishComputedTarget(const tf::StampedTransform& transform);
 	void publishCommandedTarget(const tf::StampedTransform& transform);
@@ -124,7 +130,7 @@ private:
 	const std::string map_clean_frame_; // todo (rmb-ma) not used
 	const std::string map_segmented_frame_ { "map_segmented" }; // TODO don't use the same frame than map_frame_
 	const std::string robot_frame_ { "base_link" };
-    const std::string camera1_frame_ { "camera1_optical_frame" };
+	const std::string camera1_frame_ { "camera1_optical_frame" };
 
     double robot_radius_;		// the radius of the inner circle of the bounding box of the robot footprint, in [m]
 	double coverage_radius_;		// the radius of the area of the coverage device (cleaner, camera, ...), in [m]
@@ -139,8 +145,9 @@ private:
 #endif
 
 	boost::shared_ptr<MoveBaseActionServer> move_base_action_server_; ///< Action server which accepts requests for move base
-	void move_base_callback(const move_base_msgs::MoveBaseGoalConstPtr& goal);
+	void move_base_callback(const scitos_msgs::MoveBaseGoalConstPtr& goal);
 
+	boost::shared_ptr<PathActionServer> path_action_server_; ///< Action server which accepts requests for a path to follow
 	mira::Pose2 computeRightCandidate(const mira::Pose2 &target_pose_in_merged_map, const double offset, cv::Point2d direction_left, const mira::maps::OccupancyGrid &merged_map,
 			const mira::RigidTransform2f &map_to_odometry, const cv::Point2d &map_world_offset_, double map_resolution_,
 			const double min_obstacle_distance, const cv::Mat &area_map,
@@ -149,9 +156,7 @@ private:
 			const mira::RigidTransform2f &map_to_odometry, const cv::Point2d &map_world_offset_, double map_resolution_,
 			const double min_obstacle_distance, const cv::Mat &area_map,
 			const mira::maps::GridMap<float> &distance_transformed_map, bool &found) const;
-
 	bool computeAlternativeTargetIfNeeded(mira::Pose3 &target_pose, const double next_x, const double next_y, const double min_obstacle_distance, const cv::Mat& area_map);
-	boost::shared_ptr<PathActionServer> path_action_server_; ///< Action server which accepts requests for a path to follow
 	void path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
 
 	void displayWallFollowerPath(const std::vector<cv::Vec3d>& wall_poses, const cv::Mat& area_map, double map_resolution, const cv::Point& map_origin) const;
@@ -177,6 +182,7 @@ private:
 	ros::Publisher rfid_pub_;
 	ros::Publisher magnetic_barrier_pub_;
 	ros::Publisher emergency_stop_pub_;
+	ros::Subscriber camera_depth_points_sub_;
 	ros::Publisher camera1_pcl_pub_;
 
 	ros::ServiceServer reset_motor_stop_service_;
