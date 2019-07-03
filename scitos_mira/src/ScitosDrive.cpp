@@ -61,7 +61,7 @@ void ScitosDrive::initialize() {
   robot_->getMiraAuthority().subscribe<mira::maps::OccupancyGrid>("/maps/segmentation/Map", &ScitosDrive::map_segmented_data_callback, this);
 
   // todo:PCL -> uncomment
-  // robot_->getMiraAuthority().subscribe<pcl::PointCloud<pcl::PointXYZRGB> >("/robot/depthCam1/pcl/PCLOut", &ScitosDrive::camera1_pcl_data_callback, this);
+  robot_->getMiraAuthority().subscribe<pcl::PointCloud<pcl::PointXYZRGB> >("/robot/depthCam1/pcl/PCLOut", &ScitosDrive::camera1_pcl_data_callback, this);
   camera_depth_points_sub_ = robot_->getRosNode().subscribe<sensor_msgs::PointCloud2>("/camera/depth_registered/points", 1,
 		  &ScitosDrive::publishCameraPosition, this);
 
@@ -314,17 +314,18 @@ void ScitosDrive::publishCameraPosition(const sensor_msgs::PointCloud2ConstPtr& 
 	robot_->getTFBroadcaster().sendTransform(localization_tf);
 }
 
+// todo: wmb: change to multiple camera support, add camera number boost:bind as fixed param
 void ScitosDrive::camera1_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB>> data)
 {
-	// todo: PCL -> uncomment
+	// todo:PCL -> uncomment
 	ros::Time cam_pcl_time = ros::Time::now();
-//	// convert point cloud to ROS format
-//	//ROS_INFO("ScitosDrive::camera1_pcl_data_callback: Received camera1_pcl.");
-//	sensor_msgs::PointCloud2 camera_pcl;
-//	pcl::toROSMsg(data->value(), camera_pcl);
-//	camera_pcl.header.stamp = cam_pcl_time;
-//	camera_pcl.header.frame_id = camera1_frame_;
-//	camera1_pcl_pub_.publish(camera_pcl);
+	// convert point cloud to ROS format
+	//ROS_INFO("ScitosDrive::camera1_pcl_data_callback: Received camera1_pcl.");
+	sensor_msgs::PointCloud2 camera_pcl;
+	pcl::toROSMsg(data->value(), camera_pcl);
+	camera_pcl.header.stamp = cam_pcl_time;
+	camera_pcl.header.frame_id = camera1_frame_;
+	camera1_pcl_pub_.publish(camera_pcl);
 
 	// publish localization if available
 	geometry_msgs::TransformStamped localization_tf;

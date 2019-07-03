@@ -88,7 +88,7 @@ include_directories(include
 # include cmake file for MIRA
 include(CMakeLists.mira)
 MIRA_REQUIRE_PACKAGE(SCITOS)
-#MIRA_REQUIRE_PACKAGE(PCL)	# todo:PCL -> uncomment
+MIRA_REQUIRE_PACKAGE(PCL)	# todo:PCL -> uncomment
 
 MIRA_FIND_PACKAGE(Pilot)
 message("-- PACKAGE_Pilot_FOUND = ${PACKAGE_Pilot_FOUND}")

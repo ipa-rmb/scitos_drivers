@@ -52,8 +52,8 @@
 #include <tf/tf.h>
 #include <cv_bridge/cv_bridge.h>
 #include <angles/angles.h>
-//#include <serialization/adapters/pcl/point_types.h>	todo:PCL -> uncomment
-//#include <serialization/adapters/pcl/point_cloud.h>	todo:PCL -> uncomment
+#include <serialization/adapters/pcl/point_types.h>	// todo:PCL -> uncomment
+#include <serialization/adapters/pcl/point_cloud.h>	// todo:PCL -> uncomment
 #include <pcl_conversions/pcl_conversions.h>
 #endif
 
