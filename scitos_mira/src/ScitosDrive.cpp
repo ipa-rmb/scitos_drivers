@@ -802,7 +802,7 @@ void ScitosDrive::map_msgToCvFormat(const sensor_msgs::Image& image_map, cv::Mat
 }
 
 // todo rmb-ma (check the wrong orientation bug and how to solve it in this function)
-bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Point& current_pos, cv::Point& best_pos) const
+bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Mat& driving_direction, const cv::Point& current_pos, cv::Point& best_pos) const
 {
 	double min_dist_sqr = 1e10;
 
@@ -816,16 +816,59 @@ bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Poin
 			const double dy = v - current_pos.y;
 			const double dist_sqr = dx*dx + dy*dy;
 
-			if (dist_sqr < min_dist_sqr)
+			if (dist_sqr >= min_dist_sqr) continue;
+			const double dd_x = cos(driving_direction.at<float>(v, u));
+			const double dd_y = sin(driving_direction.at<float>(v, u));
+
+			const double factor = 3;
+			const int next_u = (int)(u - factor*dd_y);
+			const int next_v = (int)(v - factor*dd_x);
+
+			if (level_set_map.at<uchar>(next_v, next_u) == 255) continue;
+			bool found_pixels = false;
+			for (int du = -factor; du <= factor; ++du)
 			{
-				min_dist_sqr = dist_sqr;
-				best_pos = cv::Point(u,v);
+				for (int dv = -factor; dv <= factor; ++dv)
+				{
+					const int uu = next_u + du;
+					const int vv = next_v + dv;
+					if (uu == u && vv == v) continue;
+
+					if (level_set_map.at<uchar>(vv, uu) != 255) continue;
+
+					found_pixels = true;
+					break;
+				}
 			}
+			if (found_pixels) continue;
+			min_dist_sqr = dist_sqr;
+			best_pos = cv::Point(u, v);
 		}
 	}
+
+	if (min_dist_sqr != 1e10)
+		return true;
+
+
+	for (int v = 0; v < level_set_map.rows; ++v)
+	{
+		for (int u = 0; u < level_set_map.cols; ++u)
+		{
+			if (level_set_map.at<uchar>(v, u) != 255) continue;
+
+			const double dx = u - current_pos.x;
+			const double dy = v - current_pos.y;
+			const double dist_sqr = dx*dx + dy*dy;
+
+			if (dist_sqr >= min_dist_sqr) continue;
+
+			min_dist_sqr = dist_sqr;
+			best_pos = cv::Point(u, v);
+		}
+	}
+
 	return min_dist_sqr != 1e10;
 }
-
 bool ScitosDrive::computePosInNeighborhoodWithMaxCosinus(cv::Mat& level_set_map, const cv::Point& current_pos, cv::Point& next_pos, const cv::Mat& driving_direction) const
 {
 	double max_cos_angle = -1e10;
@@ -846,6 +889,8 @@ bool ScitosDrive::computePosInNeighborhoodWithMaxCosinus(cv::Mat& level_set_map,
 
 			// determine the angle difference
 			double cos_angle = dd_x*du + dd_y*dv;
+			if (cos_angle < 0) continue;
+
 			if (cos_angle > max_cos_angle)
 			{
 				max_cos_angle = cos_angle;
@@ -934,7 +979,7 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 	cv::Point2d robot_pos_in_map((robot_pos.x() - map_origin.x)/map_resolution, (robot_pos.y() - map_origin.y) / map_resolution);
 
 	cv::Point current_pos;
-	if (!computeClosestPos(level_set_map, robot_pos_in_map, current_pos))
+	if (!computeClosestPos(level_set_map, driving_direction, robot_pos_in_map, current_pos))
 		return;
 
 	wall_poses_dense.push_back(mapPosToWallGoal(driving_direction, current_pos, map_resolution, map_origin));
@@ -948,7 +993,7 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 		cv::Point next_pos(-1,-1);
 		if (!computePosInNeighborhoodWithMaxCosinus(level_set_map, current_pos, next_pos, driving_direction))
 		{
-			if (!computeClosestPos(level_set_map, current_pos, next_pos))
+			if (!computeClosestPos(level_set_map, driving_direction, current_pos, next_pos))
 				break;
 		}
 
