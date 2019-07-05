@@ -805,7 +805,6 @@ void ScitosDrive::map_msgToCvFormat(const sensor_msgs::Image& image_map, cv::Mat
 bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Mat& driving_direction, const cv::Point& current_pos, cv::Point& best_pos) const
 {
 	double min_dist_sqr = 1e10;
-
 	for (int v = 0; v < level_set_map.rows; ++v)
 	{
 		for (int u = 0; u < level_set_map.cols; ++u)
@@ -820,35 +819,30 @@ bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Mat&
 			const double dd_x = cos(driving_direction.at<float>(v, u));
 			const double dd_y = sin(driving_direction.at<float>(v, u));
 
-			const double factor = 3;
-			const int next_u = (int)(u - factor*dd_y);
-			const int next_v = (int)(v - factor*dd_x);
-
-			if (level_set_map.at<uchar>(next_v, next_u) == 255) continue;
+			const int range = 10;
 			bool found_pixels = false;
-			for (int du = -factor; du <= factor; ++du)
-			{
-				for (int dv = -factor; dv <= factor; ++dv)
-				{
-					const int uu = next_u + du;
-					const int vv = next_v + dv;
-					if (uu == u && vv == v) continue;
+			for (int du = -range; du <= range; ++du) {
+				for (int dv = -range; dv <= range; ++dv) {
+					if (du == 0 && dv == 0) continue;
+					const int uu = u + du;
+					const int vv = v + dv;
 
+					if ((du*dd_y + dv*dd_x)/sqrt(du*du + dv*dv) > -0.3) continue;
 					if (level_set_map.at<uchar>(vv, uu) != 255) continue;
-
 					found_pixels = true;
 					break;
 				}
 			}
+
 			if (found_pixels) continue;
+
+			//std::cout << "(" << u << ", " << v << ", 1.)" << std::endl;
 			min_dist_sqr = dist_sqr;
 			best_pos = cv::Point(u, v);
 		}
 	}
-
 	if (min_dist_sqr != 1e10)
 		return true;
-
 
 	for (int v = 0; v < level_set_map.rows; ++v)
 	{
