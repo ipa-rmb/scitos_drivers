@@ -388,8 +388,6 @@ void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string>
 TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, float position_accuracy, float position_tolerance, float angle_accuracy, float angle_tolerance,
 		 ScitosDrive::ActionServerType action_server_type, float cost_map_threshold, double target_wall_distance)
 {
-	const double max_speed_x = 0.6;//in [m/s] 0.6
-	const double max_speed_phi = mira::deg2rad(60.f);	// in [rad/s]
 
 	mira::navigation::TaskPtr task(new mira::navigation::Task());
 	mira::Point2f target2f(target.x(), target.y());
@@ -761,7 +759,6 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
 
 		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
-		const double max_speed_x = 0.6;//in [m/s] 0.6 todo rmb-ma as attribute
 		const double goal_accuracy = 0.05 + 0.2 * std::max(0., max_speed_x-fabs(robot_speed_x))/max_speed_x;	// only takes effect if the robot ever reaches the goal exactly instead of being commanded to the next goal already
 		// todo: if there is a big distance between two successive goal positions, decrease the goal tolerance
 		goal_position_tolerance = 0.4 + robot_speed_x * desired_planning_ahead_time;

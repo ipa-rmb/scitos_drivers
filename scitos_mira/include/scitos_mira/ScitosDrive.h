@@ -201,6 +201,9 @@ private:
     nav_msgs::Odometry odom_msg_;
     boost::mutex odom_msg_mutex_;
 
+    const double max_speed_x = 0.6; // in [m/s]
+    const double max_speed_phi = mira::deg2rad(60.f);	// in [rad/s]
+
 #ifdef __WITH_PILOT__
     mira::maps::GridMap<double,1> cost_map_;
     boost::mutex cost_map_mutex_;
