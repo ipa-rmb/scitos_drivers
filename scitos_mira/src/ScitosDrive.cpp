@@ -722,6 +722,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	{
 		mira::Time start_time = mira::Time::now();
 
+		/*
 		if (path_action_server_->isPreemptRequested())
 		{
 			PathActionServer::Result res;
@@ -729,6 +730,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 			path_action_server_->setAborted(res);
 			return;
 		}
+		*/
 
 		const geometry_msgs::Pose pose_ros = path->target_poses[i].pose;
 
@@ -784,7 +786,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	// this sends the response back to the caller
 	PathActionServer::Result res;
 
-	res.last_visited_index = path->target_poses.size();
+	res.last_visited_index = path->target_poses.size() - 1;
 	path_action_server_->setSucceeded(res);
 #else
 	ROS_ERROR("ScitosDrive::path_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
