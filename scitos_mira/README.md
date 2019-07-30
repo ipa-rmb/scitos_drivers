@@ -3,6 +3,19 @@ scitos_mira
 
 Scitos G5 drivers that interface ROS to MIRA.
 
+
+## How to build it on Ubuntu 16 with ROS Kinetic
+
+To solve the OpenCV conflict between Mira and ROS :
+* Select Ubuntu 16. OpenCV for this project
+`find_package(OpenCV 2.4.9.1  EXACT  REQUIRED)`
+* Include Ubuntu 16. OpenCV into the build
+`set (BUILD_SHARED_LIBS yes)`
+* Build `scitos_mira` alone with :
+  * `catkin clean scitos_mira`
+  * `catkin build scitos_mira`
+  **It doesn't work with `catkin_build` (shortcut cbr)!**
+
 Installation
 ------------
 See [https://github.com/strands-project/strands_systems]
@@ -40,13 +53,13 @@ The state of the motors, free-run mode, emergency button status, bumer status.
 Any velocity published on this topic will be sent to the robot motor controller. Twist.linear.x corresponds to the desired linear velocity; Twist.angular.z corresponds to the angular velocity.
 
 #### Services
-* `/reset_motorstop (scitos_msgs::ResetMotorStop)` 
+* `/reset_motorstop (scitos_msgs::ResetMotorStop)`
 This service is an empty request and empty response. It turns off the motor stop, which is engaged when the robot bumps into something. It can only be turned off if the robot is not longer in collision.
 * `/reset_odometry (scitos_msgs::ResetOdometry)`
 This empty request/response service sets the robot odometry to zero.
 * `/emergency_stop (scitos_msgs::EmergencyStop)`
 This empty request/response service stops the robot. It is equivalent to the bumper being pressed - the motor stop is engaged, and can be reset with /reset_motorstop.
-* `/enable_motors (scitos_msgs::EnableMotors)` 
+* `/enable_motors (scitos_msgs::EnableMotors)`
 This service takes a `std_msgs::Bool enabled` in the request, and gives an empty response. Disabling the motors is the same as placing the robot into "Free Run" mode from the status display.
 
 
@@ -59,7 +72,7 @@ The actual joint states of the head. This topic is published at 30Hz, although I
 * `/head/commanded_state (sensor_msgs::JointState)`
 To control the robot's head position. There are 6 axis that can be controlled by placing the joint name in JointState.name and the desired state in JointState.position. The axis are:
   * `HeadPan` - the pan joint of the head; 0 to 360 degrees, with a block point at 90 degrees.
-  * `HeadTilt` - the tilt of the head; 
+  * `HeadTilt` - the tilt of the head;
   * `EyePan` - the pan of the eyes, without moving the head.
   * `EyeTilt` - the tilt of the eyes, without moving the head.
   * `EyeLidLeft` - the state of the left eye lid, 0..100, 100  fully closed.

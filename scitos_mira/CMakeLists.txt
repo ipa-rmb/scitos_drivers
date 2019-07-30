@@ -6,7 +6,7 @@ project(scitos_mira)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp std_msgs cob_srvs sensor_msgs tf nav_msgs scitos_msgs dynamic_reconfigure move_base_msgs actionlib actionlib_msgs cv_bridge eigen_conversions pcl_ros cob_object_detection_msgs)
 
-find_package(OpenCV REQUIRED)
+find_package(OpenCV 2.4.9.1  EXACT  REQUIRED)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system thread)
@@ -88,17 +88,17 @@ include_directories(include
 # include cmake file for MIRA
 include(CMakeLists.mira)
 MIRA_REQUIRE_PACKAGE(SCITOS)
-MIRA_REQUIRE_PACKAGE(PCL)	# todo:PCL -> uncomment
+#MIRA_REQUIRE_PACKAGE(PCL)	# todo:PCL -> uncomment
 
 MIRA_FIND_PACKAGE(Pilot)
 message("-- PACKAGE_Pilot_FOUND = ${PACKAGE_Pilot_FOUND}")
 
 ## Declare a cpp executable
 #add_executable(scitos_node src/scitos_node.cpp)
-add_executable(scitos_node  src/scitos_node.cpp 
-							src/ScitosModule.cpp  
-							src/ModuleFactory.cpp 
-							src/ScitosG5.cpp  
+add_executable(scitos_node  src/scitos_node.cpp
+							src/ScitosModule.cpp
+							src/ModuleFactory.cpp
+							src/ScitosG5.cpp
 							src/ScitosCharger.cpp
 							src/ScitosDisplay.cpp
 							src/ScitosDrive.cpp
@@ -106,7 +106,7 @@ add_executable(scitos_node  src/scitos_node.cpp
 							src/ScitosHead.cpp
 							src/ScitosApplication.cpp)
 # make sure configure headers are build before node using them
-add_dependencies(scitos_node ${PROJECT_NAME}_gencfg scitos_msgs_gencpp) 
+add_dependencies(scitos_node ${PROJECT_NAME}_gencfg scitos_msgs_gencpp)
 if(${PACKAGE_Pilot_FOUND})
 	set_target_properties(scitos_node PROPERTIES COMPILE_DEFINITIONS "__WITH_PILOT__")
 endif(${PACKAGE_Pilot_FOUND})
@@ -131,6 +131,8 @@ add_dependencies(scitos_node scitos_msgs_gencpp)
 #############
 ## Install ##
 #############
+
+set (BUILD_SHARED_LIBS yes)
 
 # all install targets should use catkin DESTINATION variables
 # See http://ros.org/doc/groovy/api/catkin/html/adv_user_guide/variables.html
