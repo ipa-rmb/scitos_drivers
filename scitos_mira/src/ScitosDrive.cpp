@@ -147,7 +147,7 @@ void ScitosDrive::mileage_data_callback(mira::ChannelRead<float> data) {
 void ScitosDrive::rfid_status_callback(mira::ChannelRead<uint64> data) {
   if (data->value() == MAGNETIC_BARRIER_RFID_CODE) {
     barrier_status_.barrier_stopped = true;
-    barrier_status_.last_detection_stamp = ros::Time().fromNSec(data->timestamp.toUnixNS()); //Before it was ros::Time::now(). Changed it to the actual mira timestamp 
+    barrier_status_.last_detection_stamp = ros::Time().fromNSec(data->timestamp.toUnixNS()); //Before it was ros::Time::now(). Changed it to the actual mira timestamp
   }
   std_msgs::UInt64 out;
   out.data = data->value();
@@ -157,7 +157,7 @@ void ScitosDrive::rfid_status_callback(mira::ChannelRead<uint64> data) {
 
 void ScitosDrive::motor_status_callback(mira::ChannelRead<uint8> data) {
   ros::Time time_now = ros::Time().fromNSec(data->timestamp.toUnixNS()); //Before it was ros::Time::now(). Changed it to the actual mira timestamp
-  
+
   scitos_msgs::MotorStatus s;
   s.header.stamp=time_now;
   s.normal = (*data) & 1;
@@ -168,7 +168,7 @@ void ScitosDrive::motor_status_callback(mira::ChannelRead<uint8> data) {
   s.bus_error = (*data) & (1 << 5);
   s.stall_mode_flag = (*data) & (1 << 6);
   s.internal_error_flag = (*data) & (1 << 7);
-  
+
   motorstatus_pub_.publish(s);
 }
 
@@ -723,7 +723,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		if (path_action_server_->isPreemptRequested())
 		{
 			PathActionServer::Result res;
-			res.last_visited_index = i;
+			res.last_planned_point_index = i;
 			path_action_server_->setAborted(res);
 			return;
 		}
@@ -767,13 +767,6 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		const double angle_accuracy = 5*PI/180;
 		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, ScitosDrive::PATH_ACTION, cost_map_threshold);
 
-		if (path_action_server_->isPreemptRequested())
-		{
-			PathActionServer::Result res;
-			res.last_visited_index = i;
-			path_action_server_->setAborted(res);
-			return;
-		}
 	}
 
 	std::cout << "  Path following successfully terminated." << std::endl;
@@ -781,7 +774,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	// this sends the response back to the caller
 	PathActionServer::Result res;
 
-	res.last_visited_index = path->target_poses.size();
+	res.last_planned_point_index = path->target_poses.size();
 	path_action_server_->setSucceeded(res);
 #else
 	ROS_ERROR("ScitosDrive::path_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
@@ -921,8 +914,8 @@ void ScitosDrive::displayWallFollowerPath(const std::vector<cv::Vec3d>& wall_pos
 		}
 		if (step == wall_poses.size()-1)
 		{
-			cv::imshow("cell path", fov_path_map);
-			cv::waitKey(20);
+			//cv::imshow("cell path", fov_path_map);
+			//cv::waitKey(20);
 		}
 	}
 }
@@ -1114,7 +1107,7 @@ bool ScitosDrive::reset_motor_stop(scitos_msgs::ResetMotorStop::Request  &req, s
   emergency_stop_pub_.publish(emergency_stop_);
   mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/robot/Robot", std::string("resetMotorStop"));
   r.timedWait(mira::Duration::seconds(1));
-  r.get(); 
+  r.get();
 
   return true;
 }
@@ -1123,7 +1116,7 @@ bool ScitosDrive::reset_odometry(scitos_msgs::ResetOdometry::Request  &req, scit
   //  call_mira_service
   mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/robot/Robot", std::string("resetOdometry"));
   r.timedWait(mira::Duration::seconds(1));
-  r.get(); 
+  r.get();
 
   return true;
 }
@@ -1134,7 +1127,7 @@ bool ScitosDrive::emergency_stop(scitos_msgs::EmergencyStop::Request  &req, scit
   emergency_stop_pub_.publish(emergency_stop_);
   mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/robot/Robot", std::string("emergencyStop"));
   r.timedWait(mira::Duration::seconds(1));
-  r.get(); 
+  r.get();
 
   return true;
 }
@@ -1143,13 +1136,13 @@ bool ScitosDrive::enable_motors(scitos_msgs::EnableMotors::Request  &req, scitos
   //  call_mira_service
   mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/robot/Robot", std::string("enableMotors"),(bool)req.enable);
   r.timedWait(mira::Duration::seconds(1));
-  r.get(); 
+  r.get();
 
   return true;
 }
 
 bool ScitosDrive::change_force(scitos_msgs::ChangeForce::Request  &req, scitos_msgs::ChangeForce::Response &res) {
-	// change mira params 
+	// change mira params
 	return set_mira_param_("MainControlUnit.Force",mira::toString(req.force));
 }
 
