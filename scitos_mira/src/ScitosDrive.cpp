@@ -147,7 +147,7 @@ void ScitosDrive::mileage_data_callback(mira::ChannelRead<float> data) {
 void ScitosDrive::rfid_status_callback(mira::ChannelRead<uint64> data) {
   if (data->value() == MAGNETIC_BARRIER_RFID_CODE) {
     barrier_status_.barrier_stopped = true;
-    barrier_status_.last_detection_stamp = ros::Time().fromNSec(data->timestamp.toUnixNS()); //Before it was ros::Time::now(). Changed it to the actual mira timestamp 
+    barrier_status_.last_detection_stamp = ros::Time().fromNSec(data->timestamp.toUnixNS()); //Before it was ros::Time::now(). Changed it to the actual mira timestamp
   }
   std_msgs::UInt64 out;
   out.data = data->value();
@@ -157,7 +157,7 @@ void ScitosDrive::rfid_status_callback(mira::ChannelRead<uint64> data) {
 
 void ScitosDrive::motor_status_callback(mira::ChannelRead<uint8> data) {
   ros::Time time_now = ros::Time().fromNSec(data->timestamp.toUnixNS()); //Before it was ros::Time::now(). Changed it to the actual mira timestamp
-  
+
   scitos_msgs::MotorStatus s;
   s.header.stamp=time_now;
   s.normal = (*data) & 1;
@@ -168,7 +168,7 @@ void ScitosDrive::motor_status_callback(mira::ChannelRead<uint8> data) {
   s.bus_error = (*data) & (1 << 5);
   s.stall_mode_flag = (*data) & (1 << 6);
   s.internal_error_flag = (*data) & (1 << 7);
-  
+
   motorstatus_pub_.publish(s);
 }
 
@@ -389,8 +389,6 @@ void ScitosDrive::nav_pilot_event_status_callback(mira::ChannelRead<std::string>
 TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, float position_accuracy, float position_tolerance, float angle_accuracy, float angle_tolerance,
 		 ScitosDrive::ActionServerType action_server_type, float cost_map_threshold, double target_wall_distance)
 {
-	const double max_speed_x = 0.6;//in [m/s] 0.6
-	const double max_speed_phi = mira::deg2rad(60.f);	// in [rad/s]
 
 	mira::navigation::TaskPtr task(new mira::navigation::Task());
 	mira::Point2f target2f(target.x(), target.y());
@@ -726,7 +724,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		if (path_action_server_->isPreemptRequested())
 		{
 			PathActionServer::Result res;
-			res.last_visited_index = i;
+			res.last_planned_point_index = i;
 			path_action_server_->setAborted(res);
 			return;
 		}
@@ -764,7 +762,6 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		getCurrentRobotSpeed(robot_speed_x, robot_speed_theta);
 
 		// adapt position task accuracy to robot speed -> the faster the robot moves the more accuracy is needed
-		const double max_speed_x = 0.6;//in [m/s] 0.6 todo rmb-ma as attribute
 		const double goal_accuracy = 0.05 + 0.2 * std::max(0., max_speed_x-fabs(robot_speed_x))/max_speed_x;	// only takes effect if the robot ever reaches the goal exactly instead of being commanded to the next goal already
 		// todo: if there is a big distance between two successive goal positions, decrease the goal tolerance
 		goal_position_tolerance = 0.4 + robot_speed_x * desired_planning_ahead_time;
@@ -772,13 +769,6 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		const double angle_accuracy = 5*PI/180;
 		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance, ScitosDrive::PATH_ACTION, cost_map_threshold);
 
-		if (path_action_server_->isPreemptRequested())
-		{
-			PathActionServer::Result res;
-			res.last_visited_index = i;
-			path_action_server_->setAborted(res);
-			return;
-		}
 	}
 
 	std::cout << "  Path following successfully terminated." << std::endl;
@@ -786,7 +776,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	// this sends the response back to the caller
 	PathActionServer::Result res;
 
-	res.last_visited_index = path->target_poses.size() - 1;
+	res.last_planned_point_index = path->target_poses.size();
 	path_action_server_->setSucceeded(res);
 #else
 	ROS_ERROR("ScitosDrive::path_callback: This function is not compiled. Install the MIRA Pilot addon and make sure it is found by cmake.");
@@ -805,9 +795,47 @@ void ScitosDrive::map_msgToCvFormat(const sensor_msgs::Image& image_map, cv::Mat
 }
 
 // todo rmb-ma (check the wrong orientation bug and how to solve it in this function)
-bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Point& current_pos, cv::Point& best_pos) const
+bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Mat& driving_direction, const cv::Point& current_pos, cv::Point& best_pos) const
 {
 	double min_dist_sqr = 1e10;
+	for (int v = 0; v < level_set_map.rows; ++v)
+	{
+		for (int u = 0; u < level_set_map.cols; ++u)
+		{
+			if (level_set_map.at<uchar>(v, u) != 255) continue;
+
+			const double dx = u - current_pos.x;
+			const double dy = v - current_pos.y;
+			const double dist_sqr = dx*dx + dy*dy;
+
+			if (dist_sqr >= min_dist_sqr) continue;
+			const double dd_x = cos(driving_direction.at<float>(v, u));
+			const double dd_y = sin(driving_direction.at<float>(v, u));
+
+			const int range = 10;
+			bool found_pixels = false;
+			for (int du = -range; du <= range; ++du) {
+				for (int dv = -range; dv <= range; ++dv) {
+					if (du == 0 && dv == 0) continue;
+					const int uu = u + du;
+					const int vv = v + dv;
+
+					if ((du*dd_y + dv*dd_x)/sqrt(du*du + dv*dv) > -0.3) continue;
+					if (level_set_map.at<uchar>(vv, uu) != 255) continue;
+					found_pixels = true;
+					break;
+				}
+			}
+
+			if (found_pixels) continue;
+
+			//std::cout << "(" << u << ", " << v << ", 1.)" << std::endl;
+			min_dist_sqr = dist_sqr;
+			best_pos = cv::Point(u, v);
+		}
+	}
+	if (min_dist_sqr != 1e10)
+		return true;
 
 	for (int v = 0; v < level_set_map.rows; ++v)
 	{
@@ -819,16 +847,15 @@ bool ScitosDrive::computeClosestPos(const cv::Mat& level_set_map, const cv::Poin
 			const double dy = v - current_pos.y;
 			const double dist_sqr = dx*dx + dy*dy;
 
-			if (dist_sqr < min_dist_sqr)
-			{
-				min_dist_sqr = dist_sqr;
-				best_pos = cv::Point(u,v);
-			}
+			if (dist_sqr >= min_dist_sqr) continue;
+
+			min_dist_sqr = dist_sqr;
+			best_pos = cv::Point(u, v);
 		}
 	}
+
 	return min_dist_sqr != 1e10;
 }
-
 bool ScitosDrive::computePosInNeighborhoodWithMaxCosinus(cv::Mat& level_set_map, const cv::Point& current_pos, cv::Point& next_pos, const cv::Mat& driving_direction) const
 {
 	double max_cos_angle = -1e10;
@@ -849,6 +876,8 @@ bool ScitosDrive::computePosInNeighborhoodWithMaxCosinus(cv::Mat& level_set_map,
 
 			// determine the angle difference
 			double cos_angle = dd_x*du + dd_y*dv;
+			if (cos_angle < 0) continue;
+
 			if (cos_angle > max_cos_angle)
 			{
 				max_cos_angle = cos_angle;
@@ -887,8 +916,8 @@ void ScitosDrive::displayWallFollowerPath(const std::vector<cv::Vec3d>& wall_pos
 		}
 		if (step == wall_poses.size()-1)
 		{
-			cv::imshow("cell path", fov_path_map);
-			cv::waitKey(20);
+			//cv::imshow("cell path", fov_path_map);
+			//cv::waitKey(20);
 		}
 	}
 }
@@ -937,7 +966,7 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 	cv::Point2d robot_pos_in_map((robot_pos.x() - map_origin.x)/map_resolution, (robot_pos.y() - map_origin.y) / map_resolution);
 
 	cv::Point current_pos;
-	if (!computeClosestPos(level_set_map, robot_pos_in_map, current_pos))
+	if (!computeClosestPos(level_set_map, driving_direction, robot_pos_in_map, current_pos))
 		return;
 
 	wall_poses_dense.push_back(mapPosToWallGoal(driving_direction, current_pos, map_resolution, map_origin));
@@ -951,7 +980,7 @@ void ScitosDrive::computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoa
 		cv::Point next_pos(-1,-1);
 		if (!computePosInNeighborhoodWithMaxCosinus(level_set_map, current_pos, next_pos, driving_direction))
 		{
-			if (!computeClosestPos(level_set_map, current_pos, next_pos))
+			if (!computeClosestPos(level_set_map, driving_direction, current_pos, next_pos))
 				break;
 		}
 
@@ -1080,7 +1109,7 @@ bool ScitosDrive::reset_motor_stop(scitos_msgs::ResetMotorStop::Request  &req, s
   emergency_stop_pub_.publish(emergency_stop_);
   mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/robot/Robot", std::string("resetMotorStop"));
   r.timedWait(mira::Duration::seconds(1));
-  r.get(); 
+  r.get();
 
   return true;
 }
@@ -1089,7 +1118,7 @@ bool ScitosDrive::reset_odometry(scitos_msgs::ResetOdometry::Request  &req, scit
   //  call_mira_service
   mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/robot/Robot", std::string("resetOdometry"));
   r.timedWait(mira::Duration::seconds(1));
-  r.get(); 
+  r.get();
 
   return true;
 }
@@ -1100,7 +1129,7 @@ bool ScitosDrive::emergency_stop(scitos_msgs::EmergencyStop::Request  &req, scit
   emergency_stop_pub_.publish(emergency_stop_);
   mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/robot/Robot", std::string("emergencyStop"));
   r.timedWait(mira::Duration::seconds(1));
-  r.get(); 
+  r.get();
 
   return true;
 }
@@ -1109,13 +1138,13 @@ bool ScitosDrive::enable_motors(scitos_msgs::EnableMotors::Request  &req, scitos
   //  call_mira_service
   mira::RPCFuture<void> r = robot_->getMiraAuthority().callService<void>("/robot/Robot", std::string("enableMotors"),(bool)req.enable);
   r.timedWait(mira::Duration::seconds(1));
-  r.get(); 
+  r.get();
 
   return true;
 }
 
 bool ScitosDrive::change_force(scitos_msgs::ChangeForce::Request  &req, scitos_msgs::ChangeForce::Response &res) {
-	// change mira params 
+	// change mira params
 	return set_mira_param_("MainControlUnit.Force",mira::toString(req.force));
 }
 
