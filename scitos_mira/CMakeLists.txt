@@ -6,8 +6,8 @@ project(scitos_mira)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp std_msgs cob_srvs sensor_msgs tf nav_msgs scitos_msgs dynamic_reconfigure move_base_msgs actionlib actionlib_msgs cv_bridge eigen_conversions pcl_ros cob_object_detection_msgs)
 
-find_package(OpenCV 2.4.9.1  EXACT  REQUIRED)
-
+find_package(OpenCV)# 2.4.9.1  EXACT  REQUIRED) for ubuntu 16
+ 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system thread)
 
@@ -88,7 +88,7 @@ include_directories(include
 # include cmake file for MIRA
 include(CMakeLists.mira)
 MIRA_REQUIRE_PACKAGE(SCITOS)
-#MIRA_REQUIRE_PACKAGE(PCL)	# todo:PCL -> uncomment
+MIRA_REQUIRE_PACKAGE(PCL)	# todo:PCL -> uncomment
 
 MIRA_FIND_PACKAGE(Pilot)
 message("-- PACKAGE_Pilot_FOUND = ${PACKAGE_Pilot_FOUND}")

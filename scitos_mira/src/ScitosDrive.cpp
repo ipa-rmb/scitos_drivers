@@ -19,6 +19,8 @@
 
 #include <opencv2/opencv.hpp>
 
+#include <fstream> // DEBUG PURPOSE
+
 #define PI 3.14159265359
 
 uint64 MAGNETIC_BARRIER_RFID_CODE=0xabababab;
@@ -396,6 +398,7 @@ TargetCode ScitosDrive::setTaskAndWaitForTarget(const mira::Pose3 target, float 
 	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::OrientationTask(target.yaw(), angle_accuracy)));
 	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::VelocityTask(mira::Velocity2(max_speed_x, 0.0, max_speed_phi))));	// limit the max allowed speed
 	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::PreferredDirectionTask(mira::navigation::PreferredDirectionTask::FORWARD, 1.0f)));
+	//task->getSubTask<mira::navigation::PreferredDirectionTask>()->direction = mira::navigation::PreferredDirectionTask::BOTH; // only for testing purpose
 	task->addSubTask(mira::navigation::SubTaskPtr(new mira::navigation::SmoothTransitionTask(true, true)));
 
 	if (target_wall_distance > 0)
@@ -466,10 +469,14 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 	return computeFootprintToObstacleDistance(target_pose, target_pose_in_merged_map, merged_map, distance_transformed_map, odometry_to_map);
 }
 
+bool firstTime = true;
+
 float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_pose, mira::Pose2& target_pose_in_merged_map,
 		mira::maps::OccupancyGrid& merged_map, mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map,
 		bool debug_texts)
 {
+	if (firstTime) firstTime = false;
+	debug_texts = true;
 	// compute distance between footprint and closest obstacle
 
 	// convert target_pose into coordinate system of merged map: for local merged_map, the coordinate transform is necessary, otherwise skip
@@ -488,6 +495,8 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 
 		// add current local dynamic obstacles to global static map
 		merged_map = map_.clone();
+if (debug_texts) std::cout << "merged map cloned: " << merged_map.size() << "  "<<  merged_map.getCellSize() << " " <<  merged_map.getOffset() << std::endl;
+
 		cv::threshold(merged_map, merged_map, 99, 255, CV_THRESH_BINARY);
 		for (int v=0; v<merged_map_local.height(); ++v)
 		{
@@ -507,7 +516,15 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 		distance_transformed_map = mira::maps::GridMap<float>(merged_map.size(), merged_map.getCellSize(), merged_map.getOffset());
 		if (debug_texts) std::cout << "distance_transformed_map: " << distance_transformed_map.size() << std::endl;
 		cv::Mat threshold_img;
+		//std::ofstream myfile;
+	
+		//myfile.open("/tmp/mat");
+		//if (!firstTime)
+		//std::cout << cv::format(merged_map.getMat(), cv::Formatter::FMT_CSV) << std::endl;
+		//myfile.close();
+		
 		cv::threshold(merged_map, threshold_img, 130, 255, CV_THRESH_BINARY_INV);
+		std::cout << "out threshold" << std::endl;
 		cv::distanceTransform(threshold_img, distance_transformed_map, CV_DIST_L2, 5);
 		if (debug_texts) std::cout << "distanceTransform done" << std::endl;
 	}
@@ -720,15 +737,13 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 	{
 		mira::Time start_time = mira::Time::now();
 
-		/*
 		if (path_action_server_->isPreemptRequested())
 		{
 			PathActionServer::Result res;
 			res.last_planned_point_index = i;
-			path_action_server_->setAborted(res);
+			path_action_server_->setSucceeded(res);
 			return;
 		}
-		*/
 
 		const geometry_msgs::Pose pose_ros = path->target_poses[i].pose;
 
@@ -1083,6 +1098,7 @@ void ScitosDrive::wall_follow_callback(const scitos_msgs::MoveBaseWallFollowGoal
 		const mira::Pose3 robot_pose = getRobotPose();
 		const double cos_angle = cos(wall_poses[k].val[2] - robot_pose.yaw());
 		const double current_target_wall_distance = cos_angle > 0.4 && dx*dx + dy*dy < 0.7*0.7 ? target_wall_distance : -1;
+		std::cout << "current_target_wall_distance " << current_target_wall_distance << std::endl;
 
 		setTaskAndWaitForTarget(target_pose3, goal_accuracy, goal_position_tolerance, angle_accuracy, goal_angle_tolerance,
 				ScitosDrive::WALL_FOLLOW_ACTION, cost_map_threshold, current_target_wall_distance);
