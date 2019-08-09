@@ -52,8 +52,8 @@
 #include <tf/tf.h>
 #include <cv_bridge/cv_bridge.h>
 #include <angles/angles.h>
-#include <serialization/adapters/pcl/point_types.h>	// todo:PCL -> uncomment
-#include <serialization/adapters/pcl/point_cloud.h>	// todo:PCL -> uncomment
+#include <serialization/adapters/pcl/point_types.h>
+#include <serialization/adapters/pcl/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
 #endif
 
@@ -104,8 +104,8 @@ private:
 	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void map_clean_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void map_segmented_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
-	void camera2_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB> > data);
-	void publishCameraPosition(const sensor_msgs::PointCloud2ConstPtr& point_cloud2_rgb_msg);
+	void camera2_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB> > data); // used in reality
+	void publishCameraPosition(const sensor_msgs::PointCloud2ConstPtr& point_cloud2_rgb_msg); // used for simulation
 	void publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
@@ -211,4 +211,3 @@ private:
 };
 
 #endif
-

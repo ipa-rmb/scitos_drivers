@@ -319,8 +319,8 @@ void ScitosDrive::camera2_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pc
 {
 	// todo:PCL -> uncomment
 	ros::Time cam_pcl_time = ros::Time::now();
-	// convert point cloud to ROS format
-	//ROS_INFO("ScitosDrive::camera2_pcl_data_callback: Received camera2_pcl.");
+	//convert point cloud to ROS format
+	ROS_INFO("ScitosDrive::camera2_pcl_data_callback: Received camera2_pcl.");
 	sensor_msgs::PointCloud2 camera_pcl;
 	pcl::toROSMsg(data->value(), camera_pcl);
 	camera_pcl.header.stamp = cam_pcl_time;
@@ -470,6 +470,7 @@ float ScitosDrive::computeFootprintToObstacleDistance(const mira::Pose2& target_
 		mira::maps::OccupancyGrid& merged_map, mira::maps::GridMap<float>& distance_transformed_map, boost::shared_ptr<mira::RigidTransform2f>& odometry_to_map,
 		bool debug_texts)
 {
+  debug_texts = true;
 	// compute distance between footprint and closest obstacle
 
 	// convert target_pose into coordinate system of merged map: for local merged_map, the coordinate transform is necessary, otherwise skip
@@ -724,7 +725,7 @@ void ScitosDrive::path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& pat
 		{
 			PathActionServer::Result res;
 			res.last_planned_point_index = i;
-			path_action_server_->setAborted(res);
+			path_action_server_->setSucceeded(res);
 			return;
 		}
 
