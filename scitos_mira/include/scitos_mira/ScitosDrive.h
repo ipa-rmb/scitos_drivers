@@ -52,8 +52,8 @@
 #include <tf/tf.h>
 #include <cv_bridge/cv_bridge.h>
 #include <angles/angles.h>
-#include <serialization/adapters/pcl/point_types.h>	// todo:PCL -> uncomment
-#include <serialization/adapters/pcl/point_cloud.h>	// todo:PCL -> uncomment
+#include <serialization/adapters/pcl/point_types.h>
+#include <serialization/adapters/pcl/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
 #endif
 
@@ -104,8 +104,8 @@ private:
 	void map_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void map_clean_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
 	void map_segmented_data_callback(mira::ChannelRead<mira::maps::OccupancyGrid> data);
-	void camera2_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB> > data);
-	void publishCameraPosition(const sensor_msgs::PointCloud2ConstPtr& point_cloud2_rgb_msg);
+	void camera2_pcl_data_callback(mira::ChannelRead<pcl::PointCloud<pcl::PointXYZRGB> > data); // used in reality
+	void publishCameraPosition(const sensor_msgs::PointCloud2ConstPtr& point_cloud2_rgb_msg); // used for simulation
 	void publish_grid_map(const mira::maps::OccupancyGrid& data, const ros::Publisher& pub, const std::string& frame_id);
 	void cost_map_data_callback(mira::ChannelRead<mira::maps::GridMap<double,1> > data);
 	void getCurrentRobotSpeed(double& robot_speed_x, double& robot_speed_theta);
@@ -160,7 +160,7 @@ private:
 	void path_callback(const scitos_msgs::MoveBasePathGoalConstPtr& path);
 
 	void displayWallFollowerPath(const std::vector<cv::Vec3d>& wall_poses, const cv::Mat& area_map, double map_resolution, const cv::Point& map_origin) const;
-	bool computeClosestPos(const cv::Mat& level_set_map, const cv::Point& current_pos, cv::Point& best_pos) const;
+	bool computeClosestPos(const cv::Mat& level_set_map, const cv::Mat& driving_direction, const cv::Point& current_pos, cv::Point& best_pos) const;
 	bool computePosInNeighborhoodWithMaxCosinus(cv::Mat& level_set_map, const cv::Point& current_pos, cv::Point& next_pos, const cv::Mat& driving_direction) const;
 	void computeWallPosesDense(const scitos_msgs::MoveBaseWallFollowGoalConstPtr& goal, std::vector<cv::Vec3d>& wall_poses_dense) const;
 
@@ -201,6 +201,9 @@ private:
     nav_msgs::Odometry odom_msg_;
     boost::mutex odom_msg_mutex_;
 
+    const double max_speed_x = 0.6; // in [m/s]
+    const double max_speed_phi = mira::deg2rad(60.f);	// in [rad/s]
+
 #ifdef __WITH_PILOT__
     mira::maps::GridMap<double,1> cost_map_;
     boost::mutex cost_map_mutex_;
@@ -208,4 +211,3 @@ private:
 };
 
 #endif
-
